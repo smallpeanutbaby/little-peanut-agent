@@ -54,3 +54,26 @@ export interface AppearanceSettings {
   text: TextColor;
   language: "zh-CN" | "en";
 }
+
+export type ThinkBudget = "none" | "minimal" | "low" | "medium" | "high" | "max" | "xhigh";
+
+export interface ModelConfig {
+  providerId: string;
+  modelId: string;
+  enabled: boolean;
+  thinkEnabled: boolean;
+  thinkBudget: ThinkBudget;
+  thinkBodyOn: string;
+  thinkBodyOff: string;
+  forceTemperature: string;
+}
+
+export interface ProviderConfig {
+  id: string;
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+  enabled: boolean;
+  protocol: string;
+  isCustom: boolean;
+}
