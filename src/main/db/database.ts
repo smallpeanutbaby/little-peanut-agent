@@ -28,6 +28,8 @@ export class AppDatabase {
         think_body_on TEXT NOT NULL DEFAULT '{}',
         think_body_off TEXT NOT NULL DEFAULT '',
         force_temperature TEXT NOT NULL DEFAULT '',
+        is_custom INTEGER NOT NULL DEFAULT 0,
+        supports_think INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (provider_id, model_id)
       );
       CREATE TABLE IF NOT EXISTS provider_config (
@@ -40,6 +42,9 @@ export class AppDatabase {
         is_custom INTEGER NOT NULL DEFAULT 0
       );
     `);
+    // Migrate: add columns if missing (for existing DBs)
+    try { this.db.exec("ALTER TABLE model_config ADD COLUMN is_custom INTEGER NOT NULL DEFAULT 0"); } catch { /* already exists */ }
+    try { this.db.exec("ALTER TABLE model_config ADD COLUMN supports_think INTEGER NOT NULL DEFAULT 0"); } catch { /* already exists */ }
   }
 
   getValue(key: string): string | null {
@@ -212,5 +217,34 @@ export class AppDatabase {
   deleteProviderConfig(providerId: string) {
     this.db.prepare("DELETE FROM provider_config WHERE id = ?").run(providerId);
     this.db.prepare("DELETE FROM model_config WHERE provider_id = ?").run(providerId);
+  }
+
+  // ─── Custom Models ─────────────────────────────────────────────────
+
+  addCustomModel(providerId: string, modelId: string, supportsThink: boolean) {
+    this.db
+      .prepare(`INSERT OR IGNORE INTO model_config (provider_id, model_id, enabled, think_enabled, think_budget, think_body_on, think_body_off, force_temperature, is_custom, supports_think)
+        VALUES (?, ?, 1, 0, 'medium', '{}', '', '', 1, ?)`)
+      .run(providerId, modelId, supportsThink ? 1 : 0);
+  }
+
+  deleteCustomModel(providerId: string, modelId: string) {
+    this.db
+      .prepare("DELETE FROM model_config WHERE provider_id = ? AND model_id = ? AND is_custom = 1")
+      .run(providerId, modelId);
+  }
+
+  getCustomModels(providerId: string): Array<{ modelId: string; supportsThink: boolean }> {
+    const rows = this.db
+      .prepare("SELECT model_id, supports_think FROM model_config WHERE provider_id = ? AND is_custom = 1")
+      .all(providerId) as Array<{ model_id: string; supports_think: number }>;
+    return rows.map((r) => ({ modelId: r.model_id, supportsThink: r.supports_think === 1 }));
+  }
+
+  getAllCustomModels(): Array<{ providerId: string; modelId: string; supportsThink: boolean }> {
+    const rows = this.db
+      .prepare("SELECT provider_id, model_id, supports_think FROM model_config WHERE is_custom = 1")
+      .all() as Array<{ provider_id: string; model_id: string; supports_think: number }>;
+    return rows.map((r) => ({ providerId: r.provider_id, modelId: r.model_id, supportsThink: r.supports_think === 1 }));
   }
 }

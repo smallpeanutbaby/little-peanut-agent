@@ -23,7 +23,16 @@ const electronAPI = {
   saveProviderConfig: (config: ProviderConfig) =>
     ipcRenderer.invoke("providers:save", config) as Promise<ProviderConfig[]>,
   deleteProviderConfig: (providerId: string) =>
-    ipcRenderer.invoke("providers:delete", providerId) as Promise<ProviderConfig[]>
+    ipcRenderer.invoke("providers:delete", providerId) as Promise<ProviderConfig[]>,
+  // Custom models
+  addCustomModel: (providerId: string, modelId: string, supportsThink: boolean) =>
+    ipcRenderer.invoke("models:add-custom", providerId, modelId, supportsThink) as Promise<Array<{ modelId: string; supportsThink: boolean }>>,
+  deleteCustomModel: (providerId: string, modelId: string) =>
+    ipcRenderer.invoke("models:delete-custom", providerId, modelId) as Promise<Array<{ modelId: string; supportsThink: boolean }>>,
+  getCustomModels: (providerId: string) =>
+    ipcRenderer.invoke("models:get-custom", providerId) as Promise<Array<{ modelId: string; supportsThink: boolean }>>,
+  getAllCustomModels: () =>
+    ipcRenderer.invoke("models:get-all-custom") as Promise<Array<{ providerId: string; modelId: string; supportsThink: boolean }>>
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI);

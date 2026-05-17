@@ -16,6 +16,11 @@ declare global {
       getProviderConfig: (providerId: string) => Promise<ProviderConfig | null>;
       saveProviderConfig: (config: ProviderConfig) => Promise<ProviderConfig[]>;
       deleteProviderConfig: (providerId: string) => Promise<ProviderConfig[]>;
+      // Custom models
+      addCustomModel: (providerId: string, modelId: string, supportsThink: boolean) => Promise<Array<{ modelId: string; supportsThink: boolean }>>;
+      deleteCustomModel: (providerId: string, modelId: string) => Promise<Array<{ modelId: string; supportsThink: boolean }>>;
+      getCustomModels: (providerId: string) => Promise<Array<{ modelId: string; supportsThink: boolean }>>;
+      getAllCustomModels: () => Promise<Array<{ providerId: string; modelId: string; supportsThink: boolean }>>;
     };
   }
 }

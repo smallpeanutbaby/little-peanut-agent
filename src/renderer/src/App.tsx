@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { AppearanceSettings, BackgroundColor, ModelConfig, ProviderConfig, TextColor, ThinkBudget } from "@shared/types";
+import type { AppearanceSettings, BackgroundColor, ModelConfig, TextColor, ThinkBudget } from "@shared/types";
 import { useUiStore } from "./store/useUiStore";
 import { PROVIDER_ICON_MAP } from "./components/ProviderIcons";
 
@@ -50,21 +50,6 @@ const textClassMap: Record<TextColor, { main: string; muted: string; soft: strin
   "midnight-ink": { main: "rgba(49,63,93,0.96)", muted: "rgba(80,95,126,0.62)", soft: "rgba(49,63,93,0.24)" },
   "plum-ink": { main: "rgba(97,65,101,0.96)", muted: "rgba(128,95,132,0.62)", soft: "rgba(97,65,101,0.24)" }
 };
-
-function NavRow({ icon, label, trailing }: { icon: string; label: string; trailing?: React.ReactNode }) {
-  return (
-    <button
-      type="button"
-      className="flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-[14px] text-[var(--lp-text)]/82 transition hover:bg-white/[0.04]"
-    >
-      <span className="flex items-center gap-3">
-        <span className="inline-flex h-5 w-5 items-center justify-center text-[15px] text-[var(--lp-text)]/72">{icon}</span>
-        <span>{label}</span>
-      </span>
-      {trailing ?? null}
-    </button>
-  );
-}
 
 function SuggestionChip({ label }: { label: string }) {
   return (
@@ -192,67 +177,127 @@ const AI_PROVIDERS_DEFAULT = [
     id: "openai", name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
     models: [
-      { id: "gpt-5.5" },
+      // ── Reasoning (o-series) ── reasoning_effort: low/medium/high
+      { id: "o3-pro", think: true },
       { id: "o3", think: true },
       { id: "o3-mini", think: true },
+      { id: "o3-mini-high", think: true },
       { id: "o4-mini", think: true },
+      { id: "o4-mini-high", think: true },
+      { id: "o1", think: true },
+      { id: "o1-pro", think: true },
+      // ── GPT-5.x ──
+      { id: "gpt-5.5" },
+      { id: "gpt-5.5-pro" },
+      { id: "gpt-5.4" },
+      { id: "gpt-5.4-pro" },
+      { id: "gpt-5.4-mini" },
+      { id: "gpt-5.4-nano" },
+      { id: "gpt-5.3-chat" },
+      { id: "gpt-5.3-codex" },
+      { id: "gpt-5.2" },
+      { id: "gpt-5.2-pro" },
+      { id: "gpt-5.1" },
+      { id: "gpt-5.1-codex" },
+      { id: "gpt-5" },
+      { id: "gpt-5-pro" },
+      { id: "gpt-5-mini" },
+      { id: "gpt-5-nano" },
+      // ── GPT-4.x ──
       { id: "gpt-4.1" },
       { id: "gpt-4.1-mini" },
       { id: "gpt-4.1-nano" },
       { id: "gpt-4o" },
-      { id: "gpt-4o-mini" }
+      { id: "gpt-4o-mini" },
+      { id: "gpt-4-turbo" },
+      // ── Legacy ──
+      { id: "gpt-3.5-turbo" }
     ] as ProviderModel[]
   },
   {
     id: "anthropic", name: "Anthropic",
     baseUrl: "https://api.anthropic.com/v1",
     models: [
-      { id: "claude-sonnet-4-20250514", think: true },
-      { id: "claude-opus-4-20250514", think: true },
-      { id: "claude-3.7-sonnet", think: true },
-      { id: "claude-3.5-sonnet" },
-      { id: "claude-3.5-haiku" }
+      // ── Extended Thinking ── budget_tokens
+      { id: "claude-opus-4.7", think: true },
+      { id: "claude-opus-4.7-fast", think: true },
+      { id: "claude-opus-4.6", think: true },
+      { id: "claude-opus-4.5", think: true },
+      { id: "claude-opus-4.1", think: true },
+      { id: "claude-opus-4", think: true },
+      { id: "claude-sonnet-4.6", think: true },
+      { id: "claude-sonnet-4.5", think: true },
+      { id: "claude-sonnet-4", think: true },
+      // ── Standard ──
+      { id: "claude-haiku-4.5" },
+      { id: "claude-3.5-haiku" },
+      { id: "claude-3-haiku" }
     ] as ProviderModel[]
   },
   {
     id: "google", name: "Google Gemini",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
     models: [
+      // ── Thinking ── thinkingBudget
+      { id: "gemini-3.1-pro-preview", think: true },
+      { id: "gemini-3-flash-preview", think: true },
       { id: "gemini-2.5-pro", think: true },
       { id: "gemini-2.5-flash", think: true },
-      { id: "gemini-2.0-flash" },
-      { id: "gemini-2.0-flash-lite" },
-      { id: "gemini-1.5-pro" },
-      { id: "gemini-1.5-flash" }
+      { id: "gemini-2.5-flash-lite", think: true },
+      // ── Standard ──
+      { id: "gemini-3.1-flash-lite" },
+      { id: "gemini-2.0-flash-001" },
+      { id: "gemini-2.0-flash-lite-001" }
     ] as ProviderModel[]
   },
   {
     id: "deepseek", name: "DeepSeek",
     baseUrl: "https://api.deepseek.com/v1",
     models: [
-      { id: "deepseek-chat" },
-      { id: "deepseek-reasoner", think: true }
+      // ── Reasoning ── <think> blocks
+      { id: "deepseek-r1", think: true },
+      { id: "deepseek-r1-0528", think: true },
+      // ── Chat ──
+      { id: "deepseek-v4-pro" },
+      { id: "deepseek-v4-flash" },
+      { id: "deepseek-v3.2" },
+      { id: "deepseek-v3.1-terminus" },
+      { id: "deepseek-chat-v3.1" },
+      { id: "deepseek-chat-v3-0324" },
+      { id: "deepseek-chat" }
     ] as ProviderModel[]
   },
   {
     id: "zhipu", name: "智谱AI",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     models: [
-      { id: "glm-4-plus" },
-      { id: "glm-4-long" },
-      { id: "glm-4-flash" },
-      { id: "glm-4-flashx" },
-      { id: "glm-4v-plus" },
-      { id: "glm-z1-air", think: true },
-      { id: "glm-z1-flash", think: true }
+      // ── Latest (z-ai) ──
+      { id: "glm-5.1", think: true },
+      { id: "glm-5", think: true },
+      { id: "glm-5-turbo", think: true },
+      { id: "glm-5v-turbo", think: true },
+      // ── Standard ──
+      { id: "glm-4.7" },
+      { id: "glm-4.7-flash" },
+      { id: "glm-4.6" },
+      { id: "glm-4.6v" },
+      { id: "glm-4.5" },
+      { id: "glm-4.5-air" },
+      { id: "glm-4.5v" },
+      { id: "glm-4-32b" }
     ] as ProviderModel[]
   },
   {
     id: "moonshot", name: "Moonshot",
     baseUrl: "https://api.moonshot.cn/v1",
     models: [
-      { id: "kimi-k2" },
-      { id: "k1.5-long-think", think: true },
+      // ── Reasoning ──
+      { id: "kimi-k2.6", think: true },
+      { id: "kimi-k2.5", think: true },
+      { id: "kimi-k2-thinking", think: true },
+      { id: "kimi-k2-0905", think: true },
+      { id: "kimi-k2", think: true },
+      // ── Chat ──
       { id: "moonshot-v1-128k" },
       { id: "moonshot-v1-32k" },
       { id: "moonshot-v1-8k" }
@@ -262,46 +307,65 @@ const AI_PROVIDERS_DEFAULT = [
     id: "tongyi", name: "通义千问",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     models: [
+      // ── Reasoning / Thinking ──
+      { id: "qwen3.6-max-preview", think: true },
+      { id: "qwen3.6-plus", think: true },
+      { id: "qwen3.6-flash", think: true },
+      { id: "qwen3.5-plus-02-15", think: true },
+      { id: "qwen3.5-flash-02-23", think: true },
+      { id: "qwen3-max", think: true },
+      { id: "qwen3-max-thinking", think: true },
+      { id: "qwen3-coder", think: true },
+      { id: "qwen3-coder-plus", think: true },
       { id: "qwen3-235b-a22b", think: true },
+      { id: "qwen3-30b-a3b", think: true },
       { id: "qwen3-32b", think: true },
-      { id: "qwq-plus", think: true },
-      { id: "qwen-max" },
+      { id: "qwen3-14b", think: true },
+      { id: "qwen3-8b", think: true },
+      // ── Chat ──
       { id: "qwen-plus" },
-      { id: "qwen-turbo" },
-      { id: "qwen-long" },
-      { id: "qwen-vl-max" }
+      { id: "qwen-long" }
     ] as ProviderModel[]
   },
   {
     id: "baidu", name: "百度智能云",
     baseUrl: "https://qianfan.baidubce.com/v2",
     models: [
-      { id: "ernie-4.5-8k" },
-      { id: "ernie-4.5-turbo-8k" },
-      { id: "ernie-x1-turbo-32k", think: true },
-      { id: "ernie-4.0-8k" },
-      { id: "ernie-3.5-8k" },
-      { id: "ernie-speed-128k" }
+      // ── Reasoning ──
+      { id: "ernie-4.5-300b-a47b", think: true },
+      { id: "ernie-4.5-21b-a3b-thinking", think: true },
+      // ── Chat ──
+      { id: "ernie-4.5-21b-a3b" },
+      { id: "ernie-4.5-vl-424b-a47b" },
+      { id: "ernie-4.5-vl-28b-a3b" }
     ] as ProviderModel[]
   },
   {
     id: "minimax", name: "MiniMax",
     baseUrl: "https://api.minimax.chat/v1",
     models: [
-      { id: "MiniMax-M1", think: true },
-      { id: "MiniMax-T1", think: true },
-      { id: "abab7-chat" },
-      { id: "abab6.5s-chat" }
+      // ── Reasoning ──
+      { id: "minimax-m2.7", think: true },
+      { id: "minimax-m2.5", think: true },
+      { id: "minimax-m2.1", think: true },
+      { id: "minimax-m2", think: true },
+      { id: "minimax-m1", think: true },
+      // ── Chat ──
+      { id: "minimax-01" }
     ] as ProviderModel[]
   },
   {
     id: "siliconflow", name: "硅基流动",
     baseUrl: "https://api.siliconflow.cn/v1",
     models: [
+      // ── Reasoning ──
       { id: "Qwen/Qwen3-235B-A22B", think: true },
+      { id: "Qwen/Qwen3-30B-A3B", think: true },
       { id: "deepseek-ai/DeepSeek-R1", think: true },
-      { id: "deepseek-ai/DeepSeek-V3" },
-      { id: "Pro/Qwen/Qwen2.5-72B-Instruct" },
+      { id: "deepseek-ai/DeepSeek-R1-0528", think: true },
+      // ── Chat ──
+      { id: "deepseek-ai/DeepSeek-V3-0324" },
+      { id: "Qwen/Qwen2.5-72B-Instruct" },
       { id: "THUDM/GLM-4-9B-Chat" }
     ] as ProviderModel[]
   }
@@ -479,13 +543,75 @@ function ThinkConfigModal({ modelId, providerId, config, onClose, onSave }: {
   );
 }
 
+function AddModelModal({ providerId, onClose, onAdd }: { providerId: string; onClose: () => void; onAdd: (modelId: string, think: boolean) => void }) {
+  const [modelId, setModelId] = useState("");
+  const [hasThink, setHasThink] = useState(false);
+
+  function handleAdd() {
+    if (!modelId.trim()) return;
+    onAdd(modelId.trim(), hasThink);
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-6" onClick={onClose}>
+      <div
+        className="w-full max-w-md rounded-[24px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-[18px] font-semibold text-[var(--lp-text)]">添加模型</div>
+            <div className="mt-1 text-[13px] text-[var(--lp-muted)]">为当前服务商手动添加一个模型 ID</div>
+          </div>
+          <button className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--lp-soft-text)] hover:bg-white/[0.06]" onClick={onClose} type="button">✕</button>
+        </div>
+
+        <div className="mt-5">
+          <div className="text-[14px] font-medium text-[var(--lp-text)]">模型 ID</div>
+          <input
+            className="mt-2 w-full rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2.5 text-[13px] text-[var(--lp-text)] outline-none placeholder:text-[var(--lp-soft-text)]"
+            placeholder="例如: gpt-4o, claude-3.5-sonnet, o3"
+            value={modelId}
+            onChange={(e) => setModelId(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); }}
+            autoFocus
+          />
+        </div>
+
+        <div className="mt-4 flex items-center justify-between rounded-lg border border-[var(--lp-border)] px-4 py-3">
+          <div>
+            <div className="text-[14px] font-medium text-[var(--lp-text)]">支持推理 (Think)</div>
+            <div className="mt-0.5 text-[11px] text-[var(--lp-soft-text)]">开启后可在对话中选择推理程度档位</div>
+          </div>
+          <button type="button" className={`h-6 w-11 rounded-full transition ${hasThink ? "bg-[#10A37F]" : "bg-white/10"}`} onClick={() => setHasThink(!hasThink)}>
+            <div className={`h-5 w-5 rounded-full bg-white shadow transition ${hasThink ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
+          </button>
+        </div>
+
+        <div className="mt-6 flex justify-end gap-3">
+          <button className="rounded-lg border border-[var(--lp-border)] px-4 py-2.5 text-[13px] text-[var(--lp-text)] hover:bg-white/[0.04]" onClick={onClose} type="button">取消</button>
+          <button
+            className="rounded-lg bg-white px-5 py-2.5 text-[13px] font-medium text-[#151515] disabled:opacity-40"
+            onClick={handleAdd}
+            disabled={!modelId.trim()}
+            type="button"
+          >
+            添加
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModelConfigPage() {
   const { t } = useTranslation();
   const [customProviders, setCustomProviders] = useState<CustomProvider[]>([]);
   const [addModalOpen, setAddModalOpen] = useState(false);
+  const [addModelModalOpen, setAddModelModalOpen] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState(AI_PROVIDERS_DEFAULT[0].id);
-  const [navWidth, setNavWidth] = useState(220);
-  const [providerWidth, setProviderWidth] = useState(240);
+  const [providerWidth, setProviderWidth] = useState(260);
   const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
   const [thinkModalModel, setThinkModalModel] = useState<string | null>(null);
   const [providerSearch, setProviderSearch] = useState("");
@@ -496,6 +622,7 @@ function ModelConfigPage() {
   const [providerEnabled, setProviderEnabled] = useState(true);
   const [connectStatus, setConnectStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [connectModel, setConnectModel] = useState("");
+  const [customModels, setCustomModels] = useState<Record<string, ProviderModel[]>>({});
 
   const allProviders = [...AI_PROVIDERS_DEFAULT, ...customProviders.map((c) => ({ id: c.id, name: c.name, baseUrl: c.baseUrl, models: [] as ProviderModel[] }))];
   const filteredProviders = providerSearch
@@ -522,12 +649,21 @@ function ModelConfigPage() {
     setShowApiKey(false);
   }, [provider.id, provider.baseUrl]);
 
-  // Load custom providers from DB on mount
+  // Load custom providers and custom models from DB on mount
   useEffect(() => {
     if (!window.electronAPI?.getAllProviderConfigs) return;
     void window.electronAPI.getAllProviderConfigs().then((configs) => {
       const customs = configs.filter((c) => c.isCustom);
       setCustomProviders(customs.map((c) => ({ id: c.id, name: c.name, protocol: c.protocol, baseUrl: c.baseUrl })));
+    });
+    if (!window.electronAPI?.getAllCustomModels) return;
+    void window.electronAPI.getAllCustomModels().then((models) => {
+      const grouped: Record<string, ProviderModel[]> = {};
+      for (const m of models) {
+        if (!grouped[m.providerId]) grouped[m.providerId] = [];
+        grouped[m.providerId].push({ id: m.modelId, think: m.supportsThink || undefined });
+      }
+      setCustomModels(grouped);
     });
   }, []);
 
@@ -635,10 +771,6 @@ function ModelConfigPage() {
     setSelectedProvider(AI_PROVIDERS_DEFAULT[0].id);
   }
 
-  const filteredModels = modelSearch
-    ? provider.models.filter((m) => m.id.toLowerCase().includes(modelSearch.toLowerCase()))
-    : provider.models;
-
   function handleResize(setter: (w: number) => void, min: number, max: number, currentWidth: number) {
     return (e: React.MouseEvent) => {
       e.preventDefault();
@@ -657,32 +789,46 @@ function ModelConfigPage() {
     };
   }
 
+  // Merge default models with custom-added models for this provider
+  const allModelsForProvider = useMemo(() => {
+    const defaults = provider.models;
+    const customs = customModels[provider.id] || [];
+    const existingIds = new Set(defaults.map((m) => m.id));
+    const merged = [...defaults, ...customs.filter((c) => !existingIds.has(c.id))];
+    return merged;
+  }, [provider.models, provider.id, customModels]);
+
+  const filteredModelsDisplay = modelSearch
+    ? allModelsForProvider.filter((m) => m.id.toLowerCase().includes(modelSearch.toLowerCase()))
+    : allModelsForProvider;
+
+  function handleAddModel(modelId: string, think: boolean) {
+    // Persist to DB
+    if (window.electronAPI?.addCustomModel) {
+      void window.electronAPI.addCustomModel(provider.id, modelId, think);
+    }
+    setCustomModels((prev) => {
+      const existing = prev[provider.id] || [];
+      if (existing.some((m) => m.id === modelId) || provider.models.some((m) => m.id === modelId)) {
+        return prev;
+      }
+      return { ...prev, [provider.id]: [...existing, { id: modelId, think: think || undefined }] };
+    });
+  }
+
+  function handleDeleteModel(modelId: string) {
+    // Persist to DB
+    if (window.electronAPI?.deleteCustomModel) {
+      void window.electronAPI.deleteCustomModel(provider.id, modelId);
+    }
+    setCustomModels((prev) => {
+      const existing = prev[provider.id] || [];
+      return { ...prev, [provider.id]: existing.filter((m) => m.id !== modelId) };
+    });
+  }
+
   return (
     <div className="flex flex-1 overflow-hidden">
-      {/* Settings Nav */}
-      <div className="flex-shrink-0 overflow-y-auto px-4 py-5" style={{ width: navWidth }}>
-        <div className="text-[18px] font-semibold text-[var(--lp-text)]">{t("sidebar.modelConfig")}</div>
-        <div className="mt-1 text-[12px] text-[var(--lp-soft-text)]">{t("modelConfig.subtitle")}</div>
-
-        <div className="mt-6 text-[11px] uppercase tracking-[0.16em] text-[var(--lp-soft-text)]">{t("modelConfig.aiCapabilities")}</div>
-        <nav className="mt-2 flex flex-col gap-0.5">
-          <button type="button" className="flex items-center gap-2.5 rounded-lg bg-white/[0.06] px-3 py-2 text-[13px] text-[var(--lp-text)]">
-            <span>🖥</span> {t("modelConfig.aiProvider")}
-          </button>
-          <button type="button" className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] text-[var(--lp-text)]/78 hover:bg-white/[0.04]">
-            <span>📋</span> {t("modelConfig.modelManage")}
-          </button>
-        </nav>
-      </div>
-
-      {/* Resize handle 1 */}
-      <div
-        className="group relative w-[5px] flex-shrink-0 cursor-col-resize"
-        onMouseDown={handleResize(setNavWidth, 160, 320, navWidth)}
-      >
-        <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--lp-border)] transition group-hover:w-[3px] group-hover:bg-white/20 group-active:w-[3px] group-active:bg-white/30" />
-      </div>
-
       {/* Provider List */}
       <div className="flex flex-shrink-0 flex-col overflow-hidden" style={{ width: providerWidth }}>
         <div className="px-3 pt-4 pb-2">
@@ -812,7 +958,7 @@ function ModelConfigPage() {
         <div className="mt-6 rounded-2xl border border-[var(--lp-border)] bg-[var(--lp-panel)] p-4">
           <div className="flex items-center justify-between">
             <div className="text-[14px] font-medium text-[var(--lp-text)]">{t("modelConfig.modelList")}</div>
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-[var(--lp-soft-text)]">{provider.models.length}</span>
+            <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-[var(--lp-soft-text)]">{allModelsForProvider.length}</span>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <input
@@ -824,20 +970,26 @@ function ModelConfigPage() {
             <button className="rounded-lg border border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)]/78 hover:bg-white/[0.04]" type="button" onClick={() => void handleEnableAll()}>{t("modelConfig.enableAll")}</button>
             <button className="rounded-lg border border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)]/78 hover:bg-white/[0.04]" type="button" onClick={() => void handleDisableAll()}>{t("modelConfig.disableAll")}</button>
             <button className="rounded-lg border border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)] hover:bg-white/[0.04]" type="button">↻ {t("modelConfig.fetchModels")}</button>
+            <button className="rounded-lg border border-dashed border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)] hover:bg-white/[0.04]" type="button" onClick={() => setAddModelModalOpen(true)}>＋ 添加模型</button>
           </div>
-          {filteredModels.length > 0 ? (
+          {filteredModelsDisplay.length > 0 ? (
             <div className="mt-3 flex flex-col gap-1">
-              {filteredModels.map((m) => {
+              {filteredModelsDisplay.map((m) => {
                 const enabled = getModelEnabled(m.id);
+                const isCustomModel = (customModels[provider.id] || []).some((cm) => cm.id === m.id);
                 return (
                   <div key={m.id} className="flex items-center justify-between rounded-lg px-3 py-2 hover:bg-white/[0.03]">
                     <span className="flex items-center gap-2 text-[13px] text-[var(--lp-text)]">
                       {m.id}
                       {m.think ? <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] font-medium text-purple-300">Think</span> : null}
+                      {isCustomModel ? <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-300">自定义</span> : null}
                     </span>
                     <div className="flex items-center gap-2">
                       {m.think ? (
                         <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md text-[14px] text-[var(--lp-soft-text)] hover:bg-white/[0.06]" title="配置 Think" onClick={() => setThinkModalModel(m.id)}>⚙</button>
+                      ) : null}
+                      {isCustomModel ? (
+                        <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md text-[14px] text-red-400/60 hover:bg-red-500/10 hover:text-red-400" title="删除模型" onClick={() => handleDeleteModel(m.id)}>✕</button>
                       ) : null}
                       <button type="button" className={`h-5 w-9 rounded-full transition ${enabled ? "bg-[#10A37F]" : "bg-white/10"}`} onClick={() => void toggleModel(m.id)}>
                         <div className={`h-4 w-4 rounded-full bg-white shadow transition ${enabled ? "translate-x-[18px]" : "translate-x-[2px]"}`} />
@@ -849,7 +1001,7 @@ function ModelConfigPage() {
             </div>
           ) : (
             <div className="mt-4 text-center text-[13px] text-[var(--lp-soft-text)]">
-              {provider.models.length === 0 ? t("modelConfig.comingSoon") : "无匹配模型"}
+              {allModelsForProvider.length === 0 ? t("modelConfig.comingSoon") : "无匹配模型"}
             </div>
           )}
         </div>
@@ -887,6 +1039,122 @@ function ModelConfigPage() {
           onSave={(c) => void handleSaveThinkConfig(c)}
         />
       ) : null}
+
+      {addModelModalOpen ? (
+        <AddModelModal
+          providerId={provider.id}
+          onClose={() => setAddModelModalOpen(false)}
+          onAdd={handleAddModel}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+const THINK_BUDGET_LABELS: Record<ThinkBudget, string> = {
+  none: "关闭",
+  minimal: "极低",
+  low: "低",
+  medium: "中",
+  high: "高",
+  max: "超高",
+  xhigh: "极高"
+};
+
+function ModelSelector({
+  selectedProvider,
+  selectedModel,
+  thinkBudget,
+  onChangeProvider,
+  onChangeModel,
+  onChangeBudget
+}: {
+  selectedProvider: string;
+  selectedModel: string;
+  thinkBudget: ThinkBudget;
+  onChangeProvider: (id: string) => void;
+  onChangeModel: (id: string) => void;
+  onChangeBudget: (b: ThinkBudget) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const provider = AI_PROVIDERS_DEFAULT.find((p) => p.id === selectedProvider) ?? AI_PROVIDERS_DEFAULT[0];
+  const model = provider.models.find((m) => m.id === selectedModel);
+  const displayName = selectedModel ? selectedModel.split("/").pop()! : "选择模型";
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        className="flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] bg-white/[0.03] px-3 py-1.5 text-[13px] text-[var(--lp-text)]/88 hover:bg-white/[0.06]"
+        onClick={() => setOpen(!open)}
+      >
+        <span className="inline-flex h-4 w-4 items-center justify-center">
+          {PROVIDER_ICON_MAP[provider.id] ? (() => { const Icon = PROVIDER_ICON_MAP[provider.id]; return <Icon size={14} />; })() : <span className="text-[10px]">{provider.name[0]}</span>}
+        </span>
+        <span className="max-w-[140px] truncate">{displayName}</span>
+        {model?.think ? <span className="rounded bg-purple-500/20 px-1 py-0.5 text-[9px] font-medium text-purple-300">{THINK_BUDGET_LABELS[thinkBudget]}</span> : null}
+        <span className="text-[var(--lp-soft-text)]">⌄</span>
+      </button>
+
+      {open ? (
+        <div className="absolute bottom-[calc(100%+8px)] left-0 z-40 w-[340px] max-h-[420px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
+          <div className="flex max-h-[420px] flex-col">
+            {/* Provider tabs */}
+            <div className="flex gap-1 overflow-x-auto border-b border-white/[0.06] px-3 py-2">
+              {AI_PROVIDERS_DEFAULT.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  className={`flex-shrink-0 rounded-md px-2 py-1 text-[11px] transition ${selectedProvider === p.id ? "bg-white/[0.1] text-[var(--lp-text)]" : "text-[var(--lp-soft-text)] hover:bg-white/[0.04]"}`}
+                  onClick={() => { onChangeProvider(p.id); if (p.models.length > 0) onChangeModel(p.models[0].id); }}
+                >
+                  {p.name}
+                </button>
+              ))}
+            </div>
+
+            {/* Model list */}
+            <div className="flex-1 overflow-y-auto px-2 py-2">
+              {provider.models.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] transition ${selectedModel === m.id ? "bg-white/[0.08] text-[var(--lp-text)]" : "text-[var(--lp-text)]/78 hover:bg-white/[0.04]"}`}
+                  onClick={() => { onChangeModel(m.id); if (!m.think) setOpen(false); }}
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="truncate">{m.id}</span>
+                    {m.think ? <span className="rounded bg-purple-500/20 px-1 py-0.5 text-[9px] font-medium text-purple-300">Think</span> : null}
+                  </span>
+                  {selectedModel === m.id ? <span className="text-[#10A37F]">✓</span> : null}
+                </button>
+              ))}
+            </div>
+
+            {/* Think budget selector */}
+            {model?.think ? (
+              <div className="border-t border-white/[0.06] px-3 py-2.5">
+                <div className="mb-1.5 text-[11px] text-[var(--lp-soft-text)]">推理程度</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {(["none", "minimal", "low", "medium", "high", "max", "xhigh"] as ThinkBudget[]).map((b) => (
+                    <button
+                      key={b}
+                      type="button"
+                      className={`rounded-md border px-2 py-1 text-[11px] transition ${thinkBudget === b ? "border-[#10A37F] bg-[#10A37F]/10 text-[#10A37F]" : "border-[var(--lp-border)] text-[var(--lp-text)]/70 hover:bg-white/[0.04]"}`}
+                      onClick={() => { onChangeBudget(b); setOpen(false); }}
+                    >
+                      {THINK_BUDGET_LABELS[b]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Click outside to close */}
+      {open ? <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} /> : null}
     </div>
   );
 }
@@ -909,6 +1177,9 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activePage, setActivePage] = useState<"chat" | "modelConfig">("chat");
   const [sidebarWidth, setSidebarWidth] = useState(280);
+  const [chatProvider, setChatProvider] = useState(AI_PROVIDERS_DEFAULT[0].id);
+  const [chatModel, setChatModel] = useState(AI_PROVIDERS_DEFAULT[0].models[0].id);
+  const [chatThinkBudget, setChatThinkBudget] = useState<ThinkBudget>("medium");
 
   function handleSidebarResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -1182,11 +1453,14 @@ export function App() {
                         <span className="text-[var(--lp-soft-text)]">⌄</span>
                       </button>
                       <ModeMenu open={modeMenuOpen} onClose={() => setModeMenuOpen(false)} />
-                      <button className="flex items-center gap-1.5 rounded-full px-2 py-1.5 text-[#f0b95e] hover:bg-white/[0.04]" type="button">
-                        <span>✦</span>
-                        <span className="text-[13px]">Auto</span>
-                      </button>
-                      <button className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--lp-soft-text)] hover:bg-white/[0.04]" type="button">⇆</button>
+                      <ModelSelector
+                        selectedProvider={chatProvider}
+                        selectedModel={chatModel}
+                        thinkBudget={chatThinkBudget}
+                        onChangeProvider={setChatProvider}
+                        onChangeModel={setChatModel}
+                        onChangeBudget={setChatThinkBudget}
+                      />
                       <button className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--lp-soft-text)] hover:bg-white/[0.04]" type="button">＋</button>
                     </div>
 

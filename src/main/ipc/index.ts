@@ -42,4 +42,20 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
     database.deleteProviderConfig(providerId);
     return database.getAllProviderConfigs();
   });
+
+  // ─── Custom Models ─────────────────────────────────────────────────
+  ipcMain.handle("models:add-custom", (_event, providerId: string, modelId: string, supportsThink: boolean) => {
+    database.addCustomModel(providerId, modelId, supportsThink);
+    return database.getCustomModels(providerId);
+  });
+  ipcMain.handle("models:delete-custom", (_event, providerId: string, modelId: string) => {
+    database.deleteCustomModel(providerId, modelId);
+    return database.getCustomModels(providerId);
+  });
+  ipcMain.handle("models:get-custom", (_event, providerId: string) => {
+    return database.getCustomModels(providerId);
+  });
+  ipcMain.handle("models:get-all-custom", () => {
+    return database.getAllCustomModels();
+  });
 }
