@@ -15,8 +15,10 @@ function createWindow() {
     height: 920,
     minWidth: 1200,
     minHeight: 760,
-    title: "Little Peanut",
+    title: "OpenCowork",
     backgroundColor: "#0b0c0f",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
+    autoHideMenuBar: process.platform === "win32",
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -40,7 +42,7 @@ app.whenReady().then(() => {
 
   registerIpc(
     {
-      name: "Little Peanut",
+      name: "OpenCowork",
       version: app.getVersion(),
       platform: process.platform
     },

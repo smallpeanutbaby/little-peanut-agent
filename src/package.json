@@ -1,15 +1,70 @@
 {
-  "name": "little-peanut",
+  "name": "opencowork",
+  "productName": "OpenCowork",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "dist-electron/main/index.js",
+  "author": {
+    "name": "OpenCowork"
+  },
   "scripts": {
     "dev": "electron-vite dev",
     "build": "tsc --noEmit && electron-vite build",
     "typecheck": "tsc --noEmit",
     "rebuild:native": "node -e \"const {execSync}=require('node:child_process'); const version=require('electron/package.json').version; execSync('npm rebuild better-sqlite3 --runtime=electron --target='+version+' --disturl=https://electronjs.org/headers',{stdio:'inherit'})\"",
-    "postinstall": "npm run rebuild:native"
+    "postinstall": "npm run rebuild:native",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:all": "npm run build && electron-builder -mw"
+  },
+  "build": {
+    "appId": "com.opencowork.app",
+    "productName": "OpenCowork",
+    "asar": true,
+    "directories": {
+      "output": "release/${version}",
+      "buildResources": "resources"
+    },
+    "files": [
+      "dist-electron/**/*",
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [],
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "OpenCowork"
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] }
+      ],
+      "category": "Development"
+    }
   },
   "engines": {
     "node": ">=22"
@@ -29,6 +84,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.12",
+    "electron-builder": "^25.1.8",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.0",
     "@types/react": "^19.2.2",

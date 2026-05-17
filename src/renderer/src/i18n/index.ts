@@ -22,11 +22,24 @@ void i18n
             localOne: "本地 1",
             conversations: "对话",
             emptyConversations: "暂无对话",
+            newProject: "New Project",
+            newConversation: "New Conversation",
             theme: "切换主题",
-            settings: "设置",
+            settings: "系统设置",
+            help: "帮助",
             switchToEnglish: "切换英文",
             switchToChinese: "切换中文",
-            themeSettings: "主题设置"
+            themeSettings: "主题设置",
+            agoOneHour: "1小时前",
+            chatMode: "对话模式",
+            modelConfig: "AI配置"
+          },
+          modeMenu: {
+            title: "添加到对话",
+            addPhotos: "添加图片或文件",
+            commands: "命令",
+            skills: "技能",
+            mcpServers: "MCP 服务器"
           },
           home: {
             pageTitle: "新建对话",
@@ -91,6 +104,31 @@ void i18n
               "plum-ink": "梅墨"
             }
           },
+          modelConfig: {
+            subtitle: "偏好与模型设置",
+            aiCapabilities: "AI 能力",
+            aiProvider: "AI 服务商配置",
+            aiProviderDesc: "为每个服务商配置 API Key 和模型",
+            modelManage: "模型管理",
+            modelSettings: "模型配置",
+            comingSoon: "功能开发中，敬请期待...",
+            searchProvider: "搜索服务商...",
+            addProvider: "添加",
+            enabled: "已启用",
+            disabled: "已禁用",
+            apiKey: "API Key",
+            getApiKey: "获取 API Key",
+            apiProxy: "API 代理地址",
+            apiProxyHint: "自定义端点，用于代理或第三方兼容服务",
+            connectTest: "连通性检查",
+            check: "检查",
+            modelList: "模型列表",
+            totalModels: "共 {{total}} 个模型",
+            searchModel: "搜索模型...",
+            enableAll: "全部启用",
+            disableAll: "全部禁用",
+            fetchModels: "获取模型列表"
+          },
           settingsPanel: {
             title: "设置",
             description: "这里将放置更多系统设置。"
@@ -111,11 +149,24 @@ void i18n
             localOne: "Local 1",
             conversations: "Conversations",
             emptyConversations: "No conversations yet",
+            newProject: "New Project",
+            newConversation: "New Conversation",
             theme: "Toggle theme",
             settings: "Settings",
+            help: "Help",
             switchToEnglish: "Switch to English",
-            switchToChinese: "切换中文",
-            themeSettings: "Theme settings"
+            switchToChinese: "Switch to Chinese",
+            themeSettings: "Theme settings",
+            agoOneHour: "1 hour ago",
+            chatMode: "Chat Mode",
+            modelConfig: "AI Config"
+          },
+          modeMenu: {
+            title: "Add to conversation",
+            addPhotos: "Add photos and files",
+            commands: "Commands",
+            skills: "Skills",
+            mcpServers: "MCP Servers"
           },
           home: {
             pageTitle: "New Chat",
@@ -179,6 +230,31 @@ void i18n
               "midnight-ink": "Midnight Ink",
               "plum-ink": "Plum Ink"
             }
+          },
+          modelConfig: {
+            subtitle: "Preferences & Model settings",
+            aiCapabilities: "AI Capabilities",
+            aiProvider: "AI Provider Config",
+            aiProviderDesc: "Configure API Key and models for each provider",
+            modelManage: "Model Management",
+            modelSettings: "Model Settings",
+            comingSoon: "Coming soon...",
+            searchProvider: "Search providers...",
+            addProvider: "Add",
+            enabled: "Enabled",
+            disabled: "Disabled",
+            apiKey: "API Key",
+            getApiKey: "Get API Key",
+            apiProxy: "API Proxy URL",
+            apiProxyHint: "Custom endpoint for proxy or 3rd-party compatible services",
+            connectTest: "Connection Test",
+            check: "Check",
+            modelList: "Model List",
+            totalModels: "{{total}} models total",
+            searchModel: "Search models...",
+            enableAll: "Enable All",
+            disableAll: "Disable All",
+            fetchModels: "Fetch Model List"
           },
           settingsPanel: {
             title: "Settings",
