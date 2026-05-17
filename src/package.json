@@ -1,12 +1,12 @@
 {
-  "name": "opencowork",
-  "productName": "OpenCowork",
+  "name": "little-peanut",
+  "productName": "Little Peanut",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "main": "dist-electron/main/index.js",
   "author": {
-    "name": "OpenCowork"
+    "name": "Little Peanut"
   },
   "scripts": {
     "dev": "electron-vite dev",
@@ -21,8 +21,8 @@
     "dist:all": "npm run build && electron-builder -mw"
   },
   "build": {
-    "appId": "com.opencowork.app",
-    "productName": "OpenCowork",
+    "appId": "com.littlepeanut.app",
+    "productName": "Little Peanut",
     "asar": true,
     "directories": {
       "output": "release/${version}",
@@ -57,7 +57,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "OpenCowork"
+      "shortcutName": "Little Peanut"
     },
     "linux": {
       "target": [

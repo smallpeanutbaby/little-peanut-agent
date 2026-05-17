@@ -1,11 +1,10 @@
 import i18n from "i18next";
-import LanguageDetector from "i18next-browser-languagedetector";
 import { initReactI18next } from "react-i18next";
 
 void i18n
-  .use(LanguageDetector)
   .use(initReactI18next)
   .init({
+    lng: "zh-CN",
     fallbackLng: "zh-CN",
     resources: {
       "zh-CN": {
@@ -107,10 +106,10 @@ void i18n
           modelConfig: {
             subtitle: "偏好与模型设置",
             aiCapabilities: "AI 能力",
-            aiProvider: "AI 服务商配置",
+            aiProvider: "接入管理",
             aiProviderDesc: "为每个服务商配置 API Key 和模型",
             modelManage: "模型管理",
-            modelSettings: "模型配置",
+            modelSettings: "推理配置",
             comingSoon: "功能开发中，敬请期待...",
             searchProvider: "搜索服务商...",
             addProvider: "添加",
@@ -234,10 +233,10 @@ void i18n
           modelConfig: {
             subtitle: "Preferences & Model settings",
             aiCapabilities: "AI Capabilities",
-            aiProvider: "AI Provider Config",
+            aiProvider: "Provider Access",
             aiProviderDesc: "Configure API Key and models for each provider",
             modelManage: "Model Management",
-            modelSettings: "Model Settings",
+            modelSettings: "Inference Config",
             comingSoon: "Coming soon...",
             searchProvider: "Search providers...",
             addProvider: "Add",

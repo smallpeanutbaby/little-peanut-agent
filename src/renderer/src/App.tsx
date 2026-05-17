@@ -210,11 +210,11 @@ function ModelConfigPage() {
 
   const provider = AI_PROVIDERS.find((p) => p.id === selectedProvider) ?? AI_PROVIDERS[0];
 
-  function handleResize(setter: (w: number) => void, min: number, max: number) {
+  function handleResize(setter: (w: number) => void, min: number, max: number, currentWidth: number) {
     return (e: React.MouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
-      const startW = setter === setNavWidth ? navWidth : providerWidth;
+      const startW = currentWidth;
       function onMove(ev: MouseEvent) {
         const delta = ev.clientX - startX;
         setter(Math.min(max, Math.max(min, startW + delta)));
@@ -251,9 +251,11 @@ function ModelConfigPage() {
 
       {/* Resize handle 1 */}
       <div
-        className="w-px flex-shrink-0 cursor-col-resize bg-[var(--lp-border)] transition hover:bg-white/20"
-        onMouseDown={handleResize(setNavWidth, 160, 320)}
-      />
+        className="group relative w-[5px] flex-shrink-0 cursor-col-resize"
+        onMouseDown={handleResize(setNavWidth, 160, 320, navWidth)}
+      >
+        <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--lp-border)] transition group-hover:w-[3px] group-hover:bg-white/20 group-active:w-[3px] group-active:bg-white/30" />
+      </div>
 
       {/* Provider List */}
       <div className="flex flex-shrink-0 flex-col overflow-hidden" style={{ width: providerWidth }}>
@@ -287,9 +289,11 @@ function ModelConfigPage() {
 
       {/* Resize handle 2 */}
       <div
-        className="w-px flex-shrink-0 cursor-col-resize bg-[var(--lp-border)] transition hover:bg-white/20"
-        onMouseDown={handleResize(setProviderWidth, 180, 400)}
-      />
+        className="group relative w-[5px] flex-shrink-0 cursor-col-resize"
+        onMouseDown={handleResize(setProviderWidth, 180, 400, providerWidth)}
+      >
+        <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--lp-border)] transition group-hover:w-[3px] group-hover:bg-white/20 group-active:w-[3px] group-active:bg-white/30" />
+      </div>
 
       {/* Provider Config */}
       <div className="flex-1 overflow-y-auto px-8 py-6">
@@ -381,6 +385,23 @@ export function App() {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activePage, setActivePage] = useState<"chat" | "modelConfig">("chat");
+  const [sidebarWidth, setSidebarWidth] = useState(280);
+
+  function handleSidebarResize(e: React.MouseEvent) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarWidth;
+    function onMove(ev: MouseEvent) {
+      const delta = ev.clientX - startX;
+      setSidebarWidth(Math.min(420, Math.max(200, startW + delta)));
+    }
+    function onUp() {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    }
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
 
   useEffect(() => {
     if (!window.electronAPI?.getAppInfo) {
@@ -448,7 +469,7 @@ export function App() {
     >
       <div className="flex min-h-screen overflow-hidden">
         {/* Sidebar */}
-        <aside className="flex w-[280px] flex-col border-r border-[var(--lp-border)] bg-[var(--lp-side-bg)] px-3 pb-3 pt-0 backdrop-blur-xl">
+        <aside className="flex flex-shrink-0 flex-col bg-[var(--lp-side-bg)] px-3 pb-3 pt-0 backdrop-blur-xl" style={{ width: sidebarWidth }}>
           {/* macOS traffic-light spacer + header (draggable) */}
           <div
             className="flex h-[52px] items-center justify-center px-2"
@@ -576,6 +597,14 @@ export function App() {
             </div>
           </div>
         </aside>
+
+        {/* Sidebar resize handle */}
+        <div
+          className="group relative w-[5px] flex-shrink-0 cursor-col-resize"
+          onMouseDown={handleSidebarResize}
+        >
+          <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--lp-border)] transition group-hover:w-[3px] group-hover:bg-white/20 group-active:w-[3px] group-active:bg-white/30" />
+        </div>
 
         {/* Main */}
         <main className="flex flex-1 flex-col overflow-hidden bg-[var(--lp-main-bg)]">

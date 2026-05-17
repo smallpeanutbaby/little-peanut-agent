@@ -15,7 +15,7 @@ function createWindow() {
     height: 920,
     minWidth: 1200,
     minHeight: 760,
-    title: "OpenCowork",
+    title: "Little Peanut",
     backgroundColor: "#0b0c0f",
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "default",
     autoHideMenuBar: process.platform === "win32",
@@ -36,13 +36,13 @@ function createWindow() {
 
 app.whenReady().then(() => {
   const database = new AppDatabase(
-    path.join(process.cwd(), ".workspace-data", "little-peanut.db")
+    path.join(app.getPath("userData"), "little-peanut.db")
   );
   database.setValue("booted", "true");
 
   registerIpc(
     {
-      name: "OpenCowork",
+      name: "Little Peanut",
       version: app.getVersion(),
       platform: process.platform
     },
