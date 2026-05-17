@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+:root {
+  --lp-bg: #20180f;
+  --lp-bg-2: #281e13;
+  --lp-panel: rgba(242, 185, 63, 0.055);
+  --lp-panel-2: rgba(242, 185, 63, 0.08);
+  --lp-border: rgba(242, 185, 63, 0.16);
+  --lp-text: rgba(255, 246, 233, 0.94);
+  --lp-muted: rgba(255, 232, 193, 0.46);
+  --lp-peanut: #f2b93f;
+  --lp-peanut-soft: rgba(242, 185, 63, 0.22);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
+  font-size: 14px;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(242, 185, 63, 0.18), transparent 18%),
+    radial-gradient(circle at bottom right, rgba(242, 185, 63, 0.08), transparent 24%),
+    linear-gradient(180deg, var(--lp-bg-2), var(--lp-bg));
+  color: var(--lp-text);
+  font-family:
+    "SF Pro Display",
+    "SF Pro Text",
+    "PingFang SC",
+    "Helvetica Neue",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+textarea,
+input,
+button {
+  font: inherit;
+}
+
+button {
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background: rgba(242, 185, 63, 0.35);
+}
+
+textarea,
+button,
+input {
+  outline: none;
+}

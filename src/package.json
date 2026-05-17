@@ -1,0 +1,43 @@
+{
+  "name": "little-peanut",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist-electron/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "tsc --noEmit && electron-vite build",
+    "typecheck": "tsc --noEmit",
+    "rebuild:native": "node -e \"const {execSync}=require('node:child_process'); const version=require('electron/package.json').version; execSync('npm rebuild better-sqlite3 --runtime=electron --target='+version+' --disturl=https://electronjs.org/headers',{stdio:'inherit'})\"",
+    "postinstall": "npm run rebuild:native"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "better-sqlite3": "^12.4.1",
+    "i18next": "^25.6.0",
+    "i18next-browser-languagedetector": "^8.2.0",
+    "monaco-editor": "^0.54.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-i18next": "^16.2.0",
+    "xterm": "^5.3.0",
+    "xterm-addon-fit": "^0.8.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.12",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.0",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.1.0",
+    "electron": "^36.3.2",
+    "electron-vite": "^4.0.0",
+    "tailwindcss": "^4.1.12",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2"
+  }
+}
