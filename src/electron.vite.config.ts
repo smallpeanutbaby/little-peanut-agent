@@ -10,6 +10,11 @@ const __dirname = path.dirname(__filename);
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
+    resolve: {
+      alias: {
+        "@shared": path.join(__dirname, "shared")
+      }
+    },
     build: {
       lib: {
         entry: path.join(__dirname, "main/index.ts")
@@ -19,6 +24,11 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
+    resolve: {
+      alias: {
+        "@shared": path.join(__dirname, "shared")
+      }
+    },
     build: {
       lib: {
         entry: path.join(__dirname, "preload/index.ts"),
@@ -28,7 +38,7 @@ export default defineConfig({
       rollupOptions: {
         output: {
           format: "cjs",
-          entryFileNames: "index.js"
+          entryFileNames: "index.cjs"
         }
       },
       outDir: "dist-electron/preload"

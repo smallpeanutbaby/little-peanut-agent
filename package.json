@@ -1,0 +1,37 @@
+{
+  "name": "little-peanut-agent-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Repo root delegator. The real Electron app lives in ./src.",
+  "scripts": {
+    "install:app": "npm --prefix src install",
+    "dev": "npm --prefix src run dev",
+    "build": "npm --prefix src run build",
+    "typecheck": "npm --prefix src run typecheck",
+    "lint": "npm --prefix src run lint",
+    "format": "npm --prefix src run format",
+    "test": "npm --prefix src run test",
+    "test:ci": "npm --prefix src run test:ci",
+    "pack": "npm --prefix src run pack",
+    "dist": "npm --prefix src run dist",
+    "dist:mac": "npm --prefix src run dist:mac",
+    "dist:win": "npm --prefix src run dist:win",
+    "prepare": "husky"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7",
+    "lint-staged": "^16.1.2"
+  },
+  "lint-staged": {
+    "src/**/*.{ts,tsx}": [
+      "npm --prefix src run lint:fix --",
+      "npm --prefix src run format -- --write"
+    ],
+    "src/**/*.{json,css,md}": [
+      "npm --prefix src run format -- --write"
+    ]
+  }
+}

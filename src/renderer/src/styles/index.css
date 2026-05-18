@@ -1,15 +1,15 @@
 @import "tailwindcss";
 
 :root {
-  --lp-bg: #20180f;
-  --lp-bg-2: #281e13;
-  --lp-panel: rgba(242, 185, 63, 0.055);
-  --lp-panel-2: rgba(242, 185, 63, 0.08);
-  --lp-border: rgba(242, 185, 63, 0.16);
-  --lp-text: rgba(255, 246, 233, 0.94);
-  --lp-muted: rgba(255, 232, 193, 0.46);
-  --lp-peanut: #f2b93f;
-  --lp-peanut-soft: rgba(242, 185, 63, 0.22);
+  --lp-bg: #0a0a0a;
+  --lp-bg-2: #111111;
+  --lp-panel: rgba(255, 255, 255, 0.05);
+  --lp-panel-2: rgba(255, 255, 255, 0.08);
+  --lp-border: rgba(255, 255, 255, 0.12);
+  --lp-text: rgba(255, 255, 255, 0.92);
+  --lp-muted: rgba(255, 255, 255, 0.5);
+  --lp-peanut: #ffffff;
+  --lp-peanut-soft: rgba(255, 255, 255, 0.15);
 }
 
 html,
@@ -24,10 +24,7 @@ html {
 
 body {
   margin: 0;
-  background:
-    radial-gradient(circle at top left, rgba(242, 185, 63, 0.18), transparent 18%),
-    radial-gradient(circle at bottom right, rgba(242, 185, 63, 0.08), transparent 24%),
-    linear-gradient(180deg, var(--lp-bg-2), var(--lp-bg));
+  background: var(--lp-bg);
   color: var(--lp-text);
   font-family:
     "SF Pro Display",
@@ -54,11 +51,125 @@ button {
 }
 
 ::selection {
-  background: rgba(242, 185, 63, 0.35);
+  background: rgba(255, 255, 255, 0.25);
 }
 
 textarea,
 button,
 input {
   outline: none;
+}
+
+select {
+  color-scheme: dark;
+}
+
+select option {
+  background-color: #1a1a1a;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+select option:checked,
+select option:hover {
+  background-color: #2563eb;
+  color: #ffffff;
+}
+
+/* ── Global overlay-style scrollbar ────────────────────────────────────────
+   Replace the chunky Chromium default with a thin, semi-transparent scrollbar
+   that doesn't reserve gutter space. Visible only when scrolling / hovering.
+   Applies project-wide. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 8px;
+  transition: background-color 0.2s;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Show the thumb only when the user hovers the scrollable area */
+*:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.14);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.28);
+}
+
+/* Opt-out class for places that explicitly want zero scrollbar visible */
+.lp-no-scrollbar {
+  scrollbar-width: none;
+}
+
+.lp-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Chat typing indicator: three pulsing dots while the assistant is generating
+   and no text has arrived yet. */
+.lp-typing-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.35;
+  animation: lp-typing-bounce 1.2s ease-in-out infinite;
+}
+
+@keyframes lp-typing-bounce {
+  0%, 80%, 100% {
+    transform: translateY(0);
+    opacity: 0.35;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* Blinking caret appended to streaming assistant text (cursor effect). */
+.lp-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: currentColor;
+  opacity: 0.7;
+  animation: lp-caret-blink 1s steps(2, start) infinite;
+}
+
+@keyframes lp-caret-blink {
+  to {
+    visibility: hidden;
+  }
+}
+
+/* Sidebar conversation list: a small pulsing dot indicates that a stream is
+   currently in flight for that conversation even if the user is on another
+   page. */
+.lp-streaming-dot {
+  animation: lp-streaming-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes lp-streaming-pulse {
+  0%, 100% { transform: scale(1);   opacity: 1; }
+  50%      { transform: scale(1.4); opacity: 0.65; }
 }

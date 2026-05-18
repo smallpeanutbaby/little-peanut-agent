@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  quality:
+    name: Lint / Typecheck / Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: src/package-lock.json
+
+      - name: Install dependencies
+        # SKIP_NATIVE_REBUILD: better-sqlite3 doesn't need Electron-rebuild for
+        # unit tests; we only run pure-logic tests in CI.
+        env:
+          SKIP_NATIVE_REBUILD: "1"
+        working-directory: src
+        run: npm ci --ignore-scripts
+
+      - name: Rebuild better-sqlite3 for host Node (required by db tests)
+        working-directory: src
+        run: npm rebuild better-sqlite3
+
+      - name: Typecheck
+        working-directory: src
+        run: npm run typecheck
+
+      - name: Lint
+        working-directory: src
+        run: npm run lint
+
+      - name: Unit tests
+        working-directory: src
+        run: npm run test:ci
+
+  build:
+    name: Build (renderer + main)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: quality
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: src/package-lock.json
+
+      - name: Install dependencies
+        env:
+          SKIP_NATIVE_REBUILD: "1"
+        working-directory: src
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        working-directory: src
+        run: npm run build

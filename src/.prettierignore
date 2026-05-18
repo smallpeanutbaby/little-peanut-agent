@@ -3,4 +3,6 @@ dist
 dist-electron
 release
 .workspace-data
-*.log
+coverage
+*.tsbuildinfo
+package-lock.json

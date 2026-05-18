@@ -1,617 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import type { AppearanceSettings, BackgroundColor, ModelConfig, TextColor, ThinkBudget } from "@shared/types";
+import type { AppearanceSettings, ChatAttachment, Conversation, ModelConfig, Project, ProviderConfig, ThinkBudget } from "@shared/types";
 import { useUiStore } from "./store/useUiStore";
 import { PROVIDER_ICON_MAP } from "./components/ProviderIcons";
-
-const backgroundClassMap: Record<
-  BackgroundColor,
-  { base: string; top: string; side: string; main: string; panel: string; panel2: string; border: string }
-> = {
-  roast: { base: "#1a120c", top: "#22170f", side: "rgba(18,13,9,0.84)", main: "rgba(24,18,12,0.76)", panel: "rgba(242,185,63,0.05)", panel2: "rgba(242,185,63,0.08)", border: "rgba(242,185,63,0.16)" },
-  "peanut-dark": { base: "#20180f", top: "#281e13", side: "rgba(20,16,11,0.82)", main: "rgba(28,23,17,0.76)", panel: "rgba(242,185,63,0.055)", panel2: "rgba(242,185,63,0.08)", border: "rgba(242,185,63,0.16)" },
-  walnut: { base: "#191511", top: "#211b15", side: "rgba(17,14,10,0.82)", main: "rgba(24,20,15,0.76)", panel: "rgba(197,168,114,0.05)", panel2: "rgba(197,168,114,0.08)", border: "rgba(197,168,114,0.16)" },
-  cocoa: { base: "#241914", top: "#2d2018", side: "rgba(25,18,14,0.82)", main: "rgba(36,27,21,0.76)", panel: "rgba(204,142,104,0.05)", panel2: "rgba(204,142,104,0.08)", border: "rgba(204,142,104,0.16)" },
-  latte: { base: "#ede4d4", top: "#f5eee2", side: "rgba(255,251,244,0.86)", main: "rgba(247,241,231,0.92)", panel: "rgba(91,76,57,0.06)", panel2: "rgba(91,76,57,0.08)", border: "rgba(191,169,139,0.26)" },
-  espresso: { base: "#160f0b", top: "#1d1510", side: "rgba(16,12,9,0.84)", main: "rgba(22,17,13,0.78)", panel: "rgba(139,95,74,0.05)", panel2: "rgba(139,95,74,0.08)", border: "rgba(139,95,74,0.16)" },
-  sand: { base: "#f1e6d2", top: "#f7efe1", side: "rgba(255,251,244,0.9)", main: "rgba(248,242,232,0.94)", panel: "rgba(147,124,88,0.06)", panel2: "rgba(147,124,88,0.08)", border: "rgba(199,176,139,0.24)" },
-  caramel: { base: "#2b1d12", top: "#342315", side: "rgba(33,23,16,0.84)", main: "rgba(41,29,20,0.78)", panel: "rgba(215,145,70,0.05)", panel2: "rgba(215,145,70,0.08)", border: "rgba(215,145,70,0.16)" },
-  honey: { base: "#24180a", top: "#2e1f0d", side: "rgba(28,20,10,0.84)", main: "rgba(35,25,14,0.78)", panel: "rgba(242,187,80,0.06)", panel2: "rgba(242,187,80,0.1)", border: "rgba(242,187,80,0.18)" },
-  toffee: { base: "#2a1a12", top: "#321f15", side: "rgba(31,20,14,0.84)", main: "rgba(40,28,20,0.78)", panel: "rgba(190,119,71,0.05)", panel2: "rgba(190,119,71,0.08)", border: "rgba(190,119,71,0.17)" },
-  almond: { base: "#efe3d2", top: "#f7ecdf", side: "rgba(255,250,243,0.9)", main: "rgba(248,242,232,0.94)", panel: "rgba(125,104,75,0.06)", panel2: "rgba(125,104,75,0.08)", border: "rgba(186,164,135,0.22)" },
-  bronze: { base: "#23160f", top: "#2d1c12", side: "rgba(27,18,12,0.84)", main: "rgba(35,24,17,0.78)", panel: "rgba(168,110,62,0.05)", panel2: "rgba(168,110,62,0.08)", border: "rgba(168,110,62,0.16)" },
-  clay: { base: "#2a1712", top: "#331c15", side: "rgba(31,18,14,0.84)", main: "rgba(40,25,20,0.78)", panel: "rgba(184,102,84,0.05)", panel2: "rgba(184,102,84,0.08)", border: "rgba(184,102,84,0.17)" },
-  stone: { base: "#1a1917", top: "#22201e", side: "rgba(21,20,18,0.84)", main: "rgba(27,25,23,0.78)", panel: "rgba(175,164,150,0.05)", panel2: "rgba(175,164,150,0.08)", border: "rgba(175,164,150,0.16)" },
-  moss: { base: "#1a1c14", top: "#23261a", side: "rgba(20,22,16,0.84)", main: "rgba(28,31,21,0.78)", panel: "rgba(146,158,96,0.05)", panel2: "rgba(146,158,96,0.08)", border: "rgba(146,158,96,0.16)" },
-  forest: { base: "#121812", top: "#182018", side: "rgba(15,20,15,0.84)", main: "rgba(20,26,20,0.78)", panel: "rgba(92,135,92,0.05)", panel2: "rgba(92,135,92,0.08)", border: "rgba(92,135,92,0.16)" },
-  night: { base: "#101217", top: "#151922", side: "rgba(13,16,20,0.84)", main: "rgba(18,22,28,0.78)", panel: "rgba(109,129,173,0.05)", panel2: "rgba(109,129,173,0.08)", border: "rgba(109,129,173,0.16)" },
-  midnight: { base: "#0b0c10", top: "#101218", side: "rgba(10,12,16,0.84)", main: "rgba(14,16,22,0.78)", panel: "rgba(95,112,151,0.05)", panel2: "rgba(95,112,151,0.08)", border: "rgba(95,112,151,0.16)" },
-  obsidian: { base: "#080808", top: "#101010", side: "rgba(11,11,11,0.86)", main: "rgba(15,15,15,0.8)", panel: "rgba(160,160,160,0.05)", panel2: "rgba(160,160,160,0.08)", border: "rgba(160,160,160,0.14)" }
-};
-
-const textClassMap: Record<TextColor, { main: string; muted: string; soft: string }> = {
-  ivory: { main: "rgba(255,246,233,0.94)", muted: "rgba(255,232,193,0.46)", soft: "rgba(255,255,255,0.28)" },
-  "warm-white": { main: "rgba(255,250,244,0.96)", muted: "rgba(255,241,222,0.48)", soft: "rgba(255,255,255,0.3)" },
-  cream: { main: "rgba(250,242,229,0.95)", muted: "rgba(244,229,204,0.46)", soft: "rgba(255,250,242,0.28)" },
-  "soft-gold": { main: "rgba(244,225,180,0.96)", muted: "rgba(234,205,145,0.52)", soft: "rgba(244,225,180,0.24)" },
-  charcoal: { main: "rgba(43,35,27,0.95)", muted: "rgba(91,76,57,0.62)", soft: "rgba(78,65,49,0.35)" },
-  snow: { main: "rgba(255,255,255,0.96)", muted: "rgba(234,234,234,0.54)", soft: "rgba(255,255,255,0.28)" },
-  linen: { main: "rgba(245,238,228,0.95)", muted: "rgba(220,207,190,0.54)", soft: "rgba(245,238,228,0.26)" },
-  pearl: { main: "rgba(236,239,245,0.95)", muted: "rgba(198,203,214,0.54)", soft: "rgba(236,239,245,0.24)" },
-  "sand-ink": { main: "rgba(117,93,63,0.96)", muted: "rgba(148,121,88,0.62)", soft: "rgba(117,93,63,0.24)" },
-  hazel: { main: "rgba(124,93,59,0.96)", muted: "rgba(150,121,88,0.62)", soft: "rgba(124,93,59,0.24)" },
-  coffee: { main: "rgba(86,58,35,0.96)", muted: "rgba(120,89,60,0.62)", soft: "rgba(86,58,35,0.24)" },
-  ember: { main: "rgba(160,91,65,0.96)", muted: "rgba(184,123,98,0.62)", soft: "rgba(160,91,65,0.24)" },
-  graphite: { main: "rgba(70,73,79,0.96)", muted: "rgba(108,111,118,0.62)", soft: "rgba(70,73,79,0.24)" },
-  slate: { main: "rgba(83,96,112,0.96)", muted: "rgba(116,129,146,0.62)", soft: "rgba(83,96,112,0.24)" },
-  sage: { main: "rgba(112,128,102,0.96)", muted: "rgba(140,156,131,0.62)", soft: "rgba(112,128,102,0.24)" },
-  "olive-ink": { main: "rgba(104,112,53,0.96)", muted: "rgba(133,140,80,0.62)", soft: "rgba(104,112,53,0.24)" },
-  "teal-ink": { main: "rgba(65,110,110,0.96)", muted: "rgba(95,139,139,0.62)", soft: "rgba(65,110,110,0.24)" },
-  "midnight-ink": { main: "rgba(49,63,93,0.96)", muted: "rgba(80,95,126,0.62)", soft: "rgba(49,63,93,0.24)" },
-  "plum-ink": { main: "rgba(97,65,101,0.96)", muted: "rgba(128,95,132,0.62)", soft: "rgba(97,65,101,0.24)" }
-};
-
-function SuggestionChip({ label }: { label: string }) {
-  return (
-    <button
-      className="rounded-full border border-[var(--lp-border)] bg-[var(--lp-panel)] px-4 py-2.5 text-[13px] text-[var(--lp-muted)] transition hover:border-[var(--lp-border)] hover:bg-[var(--lp-panel-2)] hover:text-[var(--lp-text)]"
-      type="button"
-    >
-      {label}
-    </button>
-  );
-}
-
-function ModeMenu({
-  open,
-  onClose
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
-  const { t } = useTranslation();
-  if (!open) return null;
-
-  const items = [
-    t("modeMenu.addPhotos"),
-    t("modeMenu.commands"),
-    t("modeMenu.skills"),
-    t("modeMenu.mcpServers")
-  ];
-
-  return (
-    <div className="absolute bottom-24 left-0 z-30 w-[360px] rounded-[24px] border border-[var(--lp-border)] bg-[rgba(52,49,48,0.96)] py-3 shadow-[0_18px_50px_rgba(0,0,0,0.32)] backdrop-blur-2xl">
-      <div className="px-5 pb-3 text-[14px] font-medium text-[var(--lp-text)]">{t("modeMenu.title")}</div>
-      {items.map((item, index) => (
-        <button
-          key={item}
-          className={`flex w-full items-center justify-between px-5 py-4 text-left text-[15px] text-[var(--lp-text)]/88 hover:bg-white/[0.05] ${
-            index !== 0 ? "border-t border-white/6" : ""
-          }`}
-          onClick={onClose}
-          type="button"
-        >
-          <span>{item}</span>
-          <span className="text-[var(--lp-soft-text)]">›</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function ThemeModal({
-  current,
-  onClose,
-  onSave
-}: {
-  current: AppearanceSettings;
-  onClose: () => void;
-  onSave: (settings: AppearanceSettings) => void;
-}) {
-  const { t } = useTranslation();
-  const [draft, setDraft] = useState(current);
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-6">
-      <div className="flex max-h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-[28px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-2xl">
-        <div className="flex items-center justify-between border-b border-white/6 px-6 py-5">
-          <div className="text-2xl font-semibold text-[var(--lp-text)]">{t("appearance.title")}</div>
-          <button className="rounded-full border border-[var(--lp-border)] bg-[var(--lp-panel)] px-4 py-2 text-sm text-[var(--lp-text)]" onClick={onClose} type="button">
-            {t("appearance.close")}
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-6 py-5">
-          <div className="mb-4 text-sm uppercase tracking-[0.18em] text-[var(--lp-soft-text)]">{t("appearance.background")}</div>
-          <div className="mb-8 grid grid-cols-5 gap-3">
-            {(Object.keys(backgroundClassMap) as BackgroundColor[]).map((background) => (
-              <button
-                key={background}
-                className={`flex flex-col items-center gap-2 rounded-2xl border px-3 py-4 ${
-                  draft.background === background ? "border-[var(--lp-border)] bg-[var(--lp-panel-2)]" : "border-white/8 bg-[var(--lp-panel)]"
-                }`}
-                onClick={() => setDraft({ ...draft, background })}
-                type="button"
-              >
-                <span className="h-8 w-8 rounded-full border border-white/10" style={{ backgroundColor: backgroundClassMap[background].base }} />
-                <span className="text-center text-xs text-[var(--lp-text)]/70">{t(`appearance.colors.${background}`)}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="mb-4 text-sm uppercase tracking-[0.18em] text-[var(--lp-soft-text)]">{t("appearance.text")}</div>
-          <div className="grid grid-cols-5 gap-3">
-            {(Object.keys(textClassMap) as TextColor[]).map((text) => (
-              <button
-                key={text}
-                className={`flex flex-col items-center gap-2 rounded-2xl border px-3 py-4 ${
-                  draft.text === text ? "border-[var(--lp-border)] bg-[var(--lp-panel-2)]" : "border-white/8 bg-[var(--lp-panel)]"
-                }`}
-                onClick={() => setDraft({ ...draft, text })}
-                type="button"
-              >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 text-sm font-semibold" style={{ color: textClassMap[text].main }}>
-                  A
-                </span>
-                <span className="text-center text-xs text-[var(--lp-text)]/70">{t(`appearance.colors.${text}`)}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="flex justify-end border-t border-white/6 px-6 py-5">
-          <button className="rounded-full bg-white px-6 py-3 text-sm font-medium text-[#151515]" onClick={() => onSave(draft)} type="button">
-            {t("appearance.save")}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-interface ProviderModel {
-  id: string;
-  think?: boolean;
-}
-
-const AI_PROVIDERS_DEFAULT = [
-  {
-    id: "openai", name: "OpenAI",
-    baseUrl: "https://api.openai.com/v1",
-    models: [
-      // ── Reasoning (o-series) ── reasoning_effort: low/medium/high
-      { id: "o3-pro", think: true },
-      { id: "o3", think: true },
-      { id: "o3-mini", think: true },
-      { id: "o3-mini-high", think: true },
-      { id: "o4-mini", think: true },
-      { id: "o4-mini-high", think: true },
-      { id: "o1", think: true },
-      { id: "o1-pro", think: true },
-      // ── GPT-5.x ──
-      { id: "gpt-5.5" },
-      { id: "gpt-5.5-pro" },
-      { id: "gpt-5.4" },
-      { id: "gpt-5.4-pro" },
-      { id: "gpt-5.4-mini" },
-      { id: "gpt-5.4-nano" },
-      { id: "gpt-5.3-chat" },
-      { id: "gpt-5.3-codex" },
-      { id: "gpt-5.2" },
-      { id: "gpt-5.2-pro" },
-      { id: "gpt-5.1" },
-      { id: "gpt-5.1-codex" },
-      { id: "gpt-5" },
-      { id: "gpt-5-pro" },
-      { id: "gpt-5-mini" },
-      { id: "gpt-5-nano" },
-      // ── GPT-4.x ──
-      { id: "gpt-4.1" },
-      { id: "gpt-4.1-mini" },
-      { id: "gpt-4.1-nano" },
-      { id: "gpt-4o" },
-      { id: "gpt-4o-mini" },
-      { id: "gpt-4-turbo" },
-      // ── Legacy ──
-      { id: "gpt-3.5-turbo" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "anthropic", name: "Anthropic",
-    baseUrl: "https://api.anthropic.com/v1",
-    models: [
-      // ── Extended Thinking ── budget_tokens
-      { id: "claude-opus-4.7", think: true },
-      { id: "claude-opus-4.7-fast", think: true },
-      { id: "claude-opus-4.6", think: true },
-      { id: "claude-opus-4.5", think: true },
-      { id: "claude-opus-4.1", think: true },
-      { id: "claude-opus-4", think: true },
-      { id: "claude-sonnet-4.6", think: true },
-      { id: "claude-sonnet-4.5", think: true },
-      { id: "claude-sonnet-4", think: true },
-      // ── Standard ──
-      { id: "claude-haiku-4.5" },
-      { id: "claude-3.5-haiku" },
-      { id: "claude-3-haiku" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "google", name: "Google Gemini",
-    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
-    models: [
-      // ── Thinking ── thinkingBudget
-      { id: "gemini-3.1-pro-preview", think: true },
-      { id: "gemini-3-flash-preview", think: true },
-      { id: "gemini-2.5-pro", think: true },
-      { id: "gemini-2.5-flash", think: true },
-      { id: "gemini-2.5-flash-lite", think: true },
-      // ── Standard ──
-      { id: "gemini-3.1-flash-lite" },
-      { id: "gemini-2.0-flash-001" },
-      { id: "gemini-2.0-flash-lite-001" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "deepseek", name: "DeepSeek",
-    baseUrl: "https://api.deepseek.com/v1",
-    models: [
-      // ── Reasoning ── <think> blocks
-      { id: "deepseek-r1", think: true },
-      { id: "deepseek-r1-0528", think: true },
-      // ── Chat ──
-      { id: "deepseek-v4-pro" },
-      { id: "deepseek-v4-flash" },
-      { id: "deepseek-v3.2" },
-      { id: "deepseek-v3.1-terminus" },
-      { id: "deepseek-chat-v3.1" },
-      { id: "deepseek-chat-v3-0324" },
-      { id: "deepseek-chat" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "zhipu", name: "智谱AI",
-    baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    models: [
-      // ── Latest (z-ai) ──
-      { id: "glm-5.1", think: true },
-      { id: "glm-5", think: true },
-      { id: "glm-5-turbo", think: true },
-      { id: "glm-5v-turbo", think: true },
-      // ── Standard ──
-      { id: "glm-4.7" },
-      { id: "glm-4.7-flash" },
-      { id: "glm-4.6" },
-      { id: "glm-4.6v" },
-      { id: "glm-4.5" },
-      { id: "glm-4.5-air" },
-      { id: "glm-4.5v" },
-      { id: "glm-4-32b" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "moonshot", name: "Moonshot",
-    baseUrl: "https://api.moonshot.cn/v1",
-    models: [
-      // ── Reasoning ──
-      { id: "kimi-k2.6", think: true },
-      { id: "kimi-k2.5", think: true },
-      { id: "kimi-k2-thinking", think: true },
-      { id: "kimi-k2-0905", think: true },
-      { id: "kimi-k2", think: true },
-      // ── Chat ──
-      { id: "moonshot-v1-128k" },
-      { id: "moonshot-v1-32k" },
-      { id: "moonshot-v1-8k" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "tongyi", name: "通义千问",
-    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    models: [
-      // ── Reasoning / Thinking ──
-      { id: "qwen3.6-max-preview", think: true },
-      { id: "qwen3.6-plus", think: true },
-      { id: "qwen3.6-flash", think: true },
-      { id: "qwen3.5-plus-02-15", think: true },
-      { id: "qwen3.5-flash-02-23", think: true },
-      { id: "qwen3-max", think: true },
-      { id: "qwen3-max-thinking", think: true },
-      { id: "qwen3-coder", think: true },
-      { id: "qwen3-coder-plus", think: true },
-      { id: "qwen3-235b-a22b", think: true },
-      { id: "qwen3-30b-a3b", think: true },
-      { id: "qwen3-32b", think: true },
-      { id: "qwen3-14b", think: true },
-      { id: "qwen3-8b", think: true },
-      // ── Chat ──
-      { id: "qwen-plus" },
-      { id: "qwen-long" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "baidu", name: "百度智能云",
-    baseUrl: "https://qianfan.baidubce.com/v2",
-    models: [
-      // ── Reasoning ──
-      { id: "ernie-4.5-300b-a47b", think: true },
-      { id: "ernie-4.5-21b-a3b-thinking", think: true },
-      // ── Chat ──
-      { id: "ernie-4.5-21b-a3b" },
-      { id: "ernie-4.5-vl-424b-a47b" },
-      { id: "ernie-4.5-vl-28b-a3b" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "minimax", name: "MiniMax",
-    baseUrl: "https://api.minimax.chat/v1",
-    models: [
-      // ── Reasoning ──
-      { id: "minimax-m2.7", think: true },
-      { id: "minimax-m2.5", think: true },
-      { id: "minimax-m2.1", think: true },
-      { id: "minimax-m2", think: true },
-      { id: "minimax-m1", think: true },
-      // ── Chat ──
-      { id: "minimax-01" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "siliconflow", name: "硅基流动",
-    baseUrl: "https://api.siliconflow.cn/v1",
-    models: [
-      // ── Reasoning ──
-      { id: "Qwen/Qwen3-235B-A22B", think: true },
-      { id: "Qwen/Qwen3-30B-A3B", think: true },
-      { id: "deepseek-ai/DeepSeek-R1", think: true },
-      { id: "deepseek-ai/DeepSeek-R1-0528", think: true },
-      // ── Chat ──
-      { id: "deepseek-ai/DeepSeek-V3-0324" },
-      { id: "Qwen/Qwen2.5-72B-Instruct" },
-      { id: "THUDM/GLM-4-9B-Chat" }
-    ] as ProviderModel[]
-  }
-];
-
-const PROTOCOL_OPTIONS = [
-  { id: "openai-chat", label: "OpenAI Chat Completions" },
-  { id: "openai-responses", label: "OpenAI Responses API" },
-  { id: "anthropic-messages", label: "Anthropic Messages API" },
-  { id: "google-gemini", label: "Google Gemini API" },
-  { id: "openai-compatible", label: "OpenAI 兼容 (第三方)" }
-];
-
-interface CustomProvider {
-  id: string;
-  name: string;
-  protocol: string;
-  baseUrl: string;
-}
-
-function AddProviderModal({ onClose, onAdd }: { onClose: () => void; onAdd: (p: CustomProvider) => void }) {
-  const { t } = useTranslation();
-  const [name, setName] = useState("");
-  const [protocol, setProtocol] = useState(PROTOCOL_OPTIONS[0].id);
-  const [baseUrl, setBaseUrl] = useState("");
-
-  function handleAdd() {
-    if (!name.trim()) return;
-    onAdd({
-      id: `custom-${Date.now()}`,
-      name: name.trim(),
-      protocol,
-      baseUrl: baseUrl.trim()
-    });
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-6" onClick={onClose}>
-      <div
-        className="w-full max-w-lg rounded-[24px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-[18px] font-semibold text-[var(--lp-text)]">添加自定义服务商</div>
-            <div className="mt-1 text-[13px] text-[var(--lp-muted)]">添加一个 OpenAI 兼容或 Anthropic 协议的自定义 AI 服务商</div>
-          </div>
-          <button className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--lp-soft-text)] hover:bg-white/[0.06]" onClick={onClose} type="button">✕</button>
-        </div>
-
-        <div className="mt-6">
-          <div className="text-[14px] font-medium text-[var(--lp-text)]">服务商名称</div>
-          <input
-            className="mt-2 w-full rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2.5 text-[13px] text-[var(--lp-text)] outline-none placeholder:text-[var(--lp-soft-text)]"
-            placeholder="我的服务商"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-
-        <div className="mt-5">
-          <div className="text-[14px] font-medium text-[var(--lp-text)]">协议类型</div>
-          <select
-            className="mt-2 rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2.5 text-[13px] text-[var(--lp-text)] outline-none"
-            value={protocol}
-            onChange={(e) => setProtocol(e.target.value)}
-          >
-            {PROTOCOL_OPTIONS.map((opt) => (
-              <option key={opt.id} value={opt.id}>{opt.label}</option>
-            ))}
-          </select>
-        </div>
-
-        <div className="mt-5">
-          <div className="text-[14px] font-medium text-[var(--lp-text)]">Base URL</div>
-          <input
-            className="mt-2 w-full rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2.5 text-[13px] text-[var(--lp-text)] outline-none placeholder:text-[var(--lp-soft-text)]"
-            placeholder="https://api.example.com"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-          />
-          <div className="mt-1 text-[11px] text-[var(--lp-soft-text)]">API 接口的基础地址</div>
-        </div>
-
-        <div className="mt-6 flex justify-end gap-3">
-          <button className="rounded-lg border border-[var(--lp-border)] px-4 py-2.5 text-[13px] text-[var(--lp-text)] hover:bg-white/[0.04]" onClick={onClose} type="button">取消</button>
-          <button
-            className="rounded-lg bg-white px-5 py-2.5 text-[13px] font-medium text-[#151515] disabled:opacity-40"
-            onClick={handleAdd}
-            disabled={!name.trim()}
-            type="button"
-          >
-            添加
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ThinkConfigModal({ modelId, providerId, config, onClose, onSave }: {
-  modelId: string;
-  providerId: string;
-  config: ModelConfig | undefined;
-  onClose: () => void;
-  onSave: (c: ModelConfig) => void;
-}) {
-  const BUDGETS: ThinkBudget[] = ["none", "minimal", "low", "medium", "high", "max", "xhigh"];
-  const [thinkEnabled, setThinkEnabled] = useState(config?.thinkEnabled ?? false);
-  const [budget, setBudget] = useState<ThinkBudget>(config?.thinkBudget ?? "medium");
-  const [bodyOn, setBodyOn] = useState(config?.thinkBodyOn ?? "{\n}");
-  const [bodyOff, setBodyOff] = useState(config?.thinkBodyOff ?? "");
-  const [forceTemp, setForceTemp] = useState(config?.forceTemperature ?? "");
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-6" onClick={onClose}>
-      <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto rounded-[24px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-[18px] font-semibold text-[var(--lp-text)]">配置 Think 支持</div>
-            <div className="mt-1 text-[13px] text-[var(--lp-muted)]">为模型 {modelId} 配置深度思考参数</div>
-          </div>
-          <button className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--lp-soft-text)] hover:bg-white/[0.06]" onClick={onClose} type="button">✕</button>
-        </div>
-
-        <div className="mt-6 flex items-center justify-between">
-          <div className="text-[14px] font-medium text-[var(--lp-text)]">启用 Think 支持</div>
-          <button type="button" className={`h-6 w-11 rounded-full transition ${thinkEnabled ? "bg-[#10A37F]" : "bg-white/10"}`} onClick={() => setThinkEnabled(!thinkEnabled)}>
-            <div className={`h-5 w-5 rounded-full bg-white shadow transition ${thinkEnabled ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
-          </button>
-        </div>
-
-        {thinkEnabled ? (
-          <>
-            <div className="mt-5">
-              <div className="text-[14px] font-medium text-[var(--lp-text)]">启用时 Body 参数 (JSON)</div>
-              <div className="mt-1 text-[11px] text-[var(--lp-soft-text)]">启用 Think 时合并到请求 body 的额外参数</div>
-              <textarea className="mt-2 h-24 w-full rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2 text-[13px] text-[var(--lp-text)] outline-none font-mono" value={bodyOn} onChange={(e) => setBodyOn(e.target.value)} />
-            </div>
-
-            <div className="mt-5">
-              <div className="text-[14px] font-medium text-[var(--lp-text)]">关闭时 Body 参数 (JSON，可选)</div>
-              <div className="mt-1 text-[11px] text-[var(--lp-soft-text)]">关闭 Think 时合并到请求 body 的参数，留空则不发送</div>
-              <textarea className="mt-2 h-24 w-full rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2 text-[13px] text-[var(--lp-text)] outline-none font-mono" placeholder="留空" value={bodyOff} onChange={(e) => setBodyOff(e.target.value)} />
-            </div>
-
-            <div className="mt-5">
-              <div className="text-[14px] font-medium text-[var(--lp-text)]">推理强度档位</div>
-              <div className="mt-1 text-[11px] text-[var(--lp-soft-text)]">选中后，聊天栏会显示档位切换；不选则仅显示 Think 开关</div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {BUDGETS.map((b) => (
-                  <button key={b} type="button" className={`rounded-lg border px-3 py-1.5 text-[12px] ${budget === b ? "border-[#10A37F] bg-[#10A37F]/10 text-[#10A37F]" : "border-[var(--lp-border)] text-[var(--lp-text)]/78 hover:bg-white/[0.04]"}`} onClick={() => setBudget(b)}>{b}</button>
-                ))}
-              </div>
-            </div>
-
-            <div className="mt-5">
-              <div className="text-[14px] font-medium text-[var(--lp-text)]">强制 Temperature (可选)</div>
-              <div className="mt-1 text-[11px] text-[var(--lp-soft-text)]">Anthropic 要求 temperature=1，留空则不覆盖</div>
-              <input className="mt-2 w-40 rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2 text-[13px] text-[var(--lp-text)] outline-none" placeholder="留空" value={forceTemp} onChange={(e) => setForceTemp(e.target.value)} />
-            </div>
-          </>
-        ) : null}
-
-        <div className="mt-6 flex justify-end gap-3">
-          <button className="rounded-lg border border-[var(--lp-border)] px-4 py-2.5 text-[13px] text-[var(--lp-text)] hover:bg-white/[0.04]" onClick={onClose} type="button">取消</button>
-          <button className="rounded-lg bg-white px-5 py-2.5 text-[13px] font-medium text-[#151515]" type="button" onClick={() => {
-            onSave({ providerId, modelId, enabled: config?.enabled ?? true, thinkEnabled, thinkBudget: budget, thinkBodyOn: bodyOn, thinkBodyOff: bodyOff, forceTemperature: forceTemp });
-            onClose();
-          }}>保存</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AddModelModal({ providerId, onClose, onAdd }: { providerId: string; onClose: () => void; onAdd: (modelId: string, think: boolean) => void }) {
-  const [modelId, setModelId] = useState("");
-  const [hasThink, setHasThink] = useState(false);
-
-  function handleAdd() {
-    if (!modelId.trim()) return;
-    onAdd(modelId.trim(), hasThink);
-    onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-6" onClick={onClose}>
-      <div
-        className="w-full max-w-md rounded-[24px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] p-6 shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-2xl"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-[18px] font-semibold text-[var(--lp-text)]">添加模型</div>
-            <div className="mt-1 text-[13px] text-[var(--lp-muted)]">为当前服务商手动添加一个模型 ID</div>
-          </div>
-          <button className="flex h-8 w-8 items-center justify-center rounded-full text-[var(--lp-soft-text)] hover:bg-white/[0.06]" onClick={onClose} type="button">✕</button>
-        </div>
-
-        <div className="mt-5">
-          <div className="text-[14px] font-medium text-[var(--lp-text)]">模型 ID</div>
-          <input
-            className="mt-2 w-full rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2.5 text-[13px] text-[var(--lp-text)] outline-none placeholder:text-[var(--lp-soft-text)]"
-            placeholder="例如: gpt-4o, claude-3.5-sonnet, o3"
-            value={modelId}
-            onChange={(e) => setModelId(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") handleAdd(); }}
-            autoFocus
-          />
-        </div>
-
-        <div className="mt-4 flex items-center justify-between rounded-lg border border-[var(--lp-border)] px-4 py-3">
-          <div>
-            <div className="text-[14px] font-medium text-[var(--lp-text)]">支持推理 (Think)</div>
-            <div className="mt-0.5 text-[11px] text-[var(--lp-soft-text)]">开启后可在对话中选择推理程度档位</div>
-          </div>
-          <button type="button" className={`h-6 w-11 rounded-full transition ${hasThink ? "bg-[#10A37F]" : "bg-white/10"}`} onClick={() => setHasThink(!hasThink)}>
-            <div className={`h-5 w-5 rounded-full bg-white shadow transition ${hasThink ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
-          </button>
-        </div>
-
-        <div className="mt-6 flex justify-end gap-3">
-          <button className="rounded-lg border border-[var(--lp-border)] px-4 py-2.5 text-[13px] text-[var(--lp-text)] hover:bg-white/[0.04]" onClick={onClose} type="button">取消</button>
-          <button
-            className="rounded-lg bg-white px-5 py-2.5 text-[13px] font-medium text-[#151515] disabled:opacity-40"
-            onClick={handleAdd}
-            disabled={!modelId.trim()}
-            type="button"
-          >
-            添加
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+import { ChatPanel } from "./components/ChatPanel";
+import { SettingsPage } from "./components/SettingsPage";
+import { CHAT_MODES, CHAT_MODE_MAP, type ChatModeId } from "@shared/modes";
+import { usePersistedState } from "./hooks/usePersistedState";
+import { backgroundClassMap, textClassMap } from "./constants/theme-tokens";
+import { AI_PROVIDERS_DEFAULT, type CustomProvider, type ProviderModel } from "./constants/providers";
+import { THINK_BUDGET_LABELS } from "./constants/think-presets";
+import { ThemeModal } from "./components/modals/ThemeModal";
+import { AddProviderModal } from "./components/modals/AddProviderModal";
+import { ThinkConfigModal } from "./components/modals/ThinkConfigModal";
+import { AddModelModal } from "./components/modals/AddModelModal";
 
 function ModelConfigPage() {
   const { t } = useTranslation();
   const [customProviders, setCustomProviders] = useState<CustomProvider[]>([]);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [addModelModalOpen, setAddModelModalOpen] = useState(false);
-  const [selectedProvider, setSelectedProvider] = useState(AI_PROVIDERS_DEFAULT[0].id);
-  const [providerWidth, setProviderWidth] = useState(260);
+  const [selectedProvider, setSelectedProvider] = usePersistedState<string>("modelConfig.selectedProvider", AI_PROVIDERS_DEFAULT[0].id);
+  const [providerWidth, setProviderWidth] = usePersistedState<number>("modelConfig.providerWidth", 260);
   const [modelConfigs, setModelConfigs] = useState<ModelConfig[]>([]);
   const [thinkModalModel, setThinkModalModel] = useState<string | null>(null);
   const [providerSearch, setProviderSearch] = useState("");
@@ -621,6 +32,8 @@ function ModelConfigPage() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [providerEnabled, setProviderEnabled] = useState(true);
   const [connectStatus, setConnectStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
+  const [connectMessage, setConnectMessage] = useState<string>("");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [connectModel, setConnectModel] = useState("");
   const [customModels, setCustomModels] = useState<Record<string, ProviderModel[]>>({});
 
@@ -645,8 +58,10 @@ function ModelConfigPage() {
       }
     });
     setConnectStatus("idle");
+    setConnectMessage("");
     setModelSearch("");
     setShowApiKey(false);
+    setSaveStatus("idle");
   }, [provider.id, provider.baseUrl]);
 
   // Load custom providers and custom models from DB on mount
@@ -661,7 +76,11 @@ function ModelConfigPage() {
       const grouped: Record<string, ProviderModel[]> = {};
       for (const m of models) {
         if (!grouped[m.providerId]) grouped[m.providerId] = [];
-        grouped[m.providerId].push({ id: m.modelId, think: m.supportsThink || undefined });
+        grouped[m.providerId].push({
+          id: m.modelId,
+          think: m.supportsThink || undefined,
+          thinkLevels: m.thinkLevels as ThinkBudget[] | undefined
+        });
       }
       setCustomModels(grouped);
     });
@@ -680,16 +99,17 @@ function ModelConfigPage() {
   const saveProviderToDb = useCallback(async (key: string, url: string, enabled: boolean) => {
     if (!window.electronAPI?.saveProviderConfig) return;
     const isCustom = !AI_PROVIDERS_DEFAULT.some((p) => p.id === provider.id);
+    const customMeta = customProviders.find((c) => c.id === provider.id);
     await window.electronAPI.saveProviderConfig({
       id: provider.id,
       name: provider.name,
       apiKey: key,
       baseUrl: url,
       enabled,
-      protocol: "openai-chat",
+      protocol: customMeta?.protocol ?? "openai-chat",
       isCustom
     });
-  }, [provider.id, provider.name]);
+  }, [provider.id, provider.name, customProviders]);
 
   function handleApiKeyBlur() {
     void saveProviderToDb(apiKey, baseUrl, providerEnabled);
@@ -705,27 +125,59 @@ function ModelConfigPage() {
     void saveProviderToDb(apiKey, baseUrl, next);
   }
 
+  async function handleSaveProvider() {
+    setSaveStatus("saving");
+    try {
+      await saveProviderToDb(apiKey, baseUrl, providerEnabled);
+      setSaveStatus("saved");
+      window.setTimeout(() => {
+        setSaveStatus((s) => (s === "saved" ? "idle" : s));
+      }, 2000);
+    } catch (err) {
+      console.error("[SaveProvider]", err);
+      setSaveStatus("error");
+    }
+  }
+
   async function handleConnectTest() {
     if (!apiKey.trim()) {
       setConnectStatus("error");
+      setConnectMessage(t("connectivity.fillApiKey"));
       return;
     }
-    setConnectStatus("testing");
-    // Simple connectivity test: try to reach the API
-    try {
-      const url = (baseUrl || provider.baseUrl).replace(/\/+$/, "");
-      const res = await fetch(`${url}/models`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json"
-        },
-        signal: AbortSignal.timeout(10000)
-      });
-      setConnectStatus(res.ok ? "success" : "error");
-    } catch {
+    if (!window.electronAPI?.checkConnectivity) {
+      const api = (window as unknown as { electronAPI?: Record<string, unknown> }).electronAPI;
+      const keys = api ? Object.keys(api).sort().join(", ") : t("connectivity.undefinedTag");
       setConnectStatus("error");
+      setConnectMessage(t("connectivity.unavailableLong", { keys }));
+      console.error("[Connectivity] window.electronAPI =", api);
+      return;
     }
+    const customMeta = customProviders.find((c) => c.id === provider.id);
+    const protocol = customMeta?.protocol ?? (
+      provider.id === "anthropic" ? "anthropic-messages" :
+      provider.id === "google" ? "google-gemini" :
+      "openai-chat"
+    );
+    setConnectStatus("testing");
+    setConnectMessage("");
+    const res = await window.electronAPI.checkConnectivity({
+      providerId: provider.id,
+      protocol,
+      baseUrl: (baseUrl || provider.baseUrl).trim(),
+      apiKey: apiKey.trim(),
+      model: connectModel || provider.models[0]?.id || ""
+    });
+    setConnectStatus(res.ok ? "success" : "error");
+    setConnectMessage(
+      res.ok
+        ? res.latencyMs
+          ? t("connectivity.connectedWithLatency", { latency: res.latencyMs })
+          : t("connectivity.connected")
+        : res.message
+          ? `${res.status ? `[${res.status}] ` : ""}${res.message}`
+          : t("connectivity.failed")
+    );
   }
 
   function getModelEnabled(modelId: string): boolean {
@@ -802,17 +254,17 @@ function ModelConfigPage() {
     ? allModelsForProvider.filter((m) => m.id.toLowerCase().includes(modelSearch.toLowerCase()))
     : allModelsForProvider;
 
-  function handleAddModel(modelId: string, think: boolean) {
+  function handleAddModel(modelId: string, think: boolean, thinkLevels?: ThinkBudget[]) {
     // Persist to DB
     if (window.electronAPI?.addCustomModel) {
-      void window.electronAPI.addCustomModel(provider.id, modelId, think);
+      void window.electronAPI.addCustomModel(provider.id, modelId, think, thinkLevels);
     }
     setCustomModels((prev) => {
       const existing = prev[provider.id] || [];
       if (existing.some((m) => m.id === modelId) || provider.models.some((m) => m.id === modelId)) {
         return prev;
       }
-      return { ...prev, [provider.id]: [...existing, { id: modelId, think: think || undefined }] };
+      return { ...prev, [provider.id]: [...existing, { id: modelId, think: think || undefined, thinkLevels }] };
     });
   }
 
@@ -871,7 +323,8 @@ function ModelConfigPage() {
         <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-[var(--lp-border)] transition group-hover:w-[3px] group-hover:bg-white/20 group-active:w-[3px] group-active:bg-white/30" />      </div>
 
       {/* Provider Config */}
-      <div className="flex-1 overflow-y-auto px-8 py-6">
+      <div className="flex flex-1 flex-col overflow-hidden px-8 py-6">
+        <div className="flex-shrink-0">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="inline-flex h-7 w-7 items-center justify-center">
@@ -880,7 +333,7 @@ function ModelConfigPage() {
             <div className="text-[20px] font-semibold text-[var(--lp-text)]">{provider.name}</div>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-[12px] text-[var(--lp-soft-text)]">OpenAI Chat Completions 兼容</span>
+            <span className="text-[12px] text-[var(--lp-soft-text)]">{t("modelConfig.openaiCompat")}</span>
             <button type="button" className={`h-6 w-11 rounded-full transition ${providerEnabled ? "bg-[#10A37F]" : "bg-white/10"}`} onClick={handleProviderToggle}>
               <div className={`h-5 w-5 rounded-full bg-white shadow transition ${providerEnabled ? "translate-x-[22px]" : "translate-x-[2px]"}`} />
             </button>
@@ -900,16 +353,31 @@ function ModelConfigPage() {
               className="flex-1 rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2 text-[13px] text-[var(--lp-text)] outline-none placeholder:text-[var(--lp-soft-text)]"
               placeholder="sk-..."
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
+              onChange={(e) => { setApiKey(e.target.value); setSaveStatus("idle"); }}
               onBlur={handleApiKeyBlur}
             />
             <button
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--lp-border)] text-[var(--lp-soft-text)] hover:bg-white/[0.04]"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-[var(--lp-border)] text-[var(--lp-soft-text)] hover:bg-white/[0.04] hover:text-[var(--lp-text)]"
               type="button"
               onClick={() => setShowApiKey(!showApiKey)}
-              title={showApiKey ? "隐藏" : "显示"}
+              title={showApiKey ? t("modelConfig.hide") : t("modelConfig.show")}
+              aria-label={showApiKey ? t("modelConfig.hideApiKey") : t("modelConfig.showApiKey")}
             >
-              {showApiKey ? "🙈" : ""}
+              {showApiKey ? (
+                // Eye-off icon
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" />
+                  <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" />
+                  <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" />
+                  <line x1="2" y1="2" x2="22" y2="22" />
+                </svg>
+              ) : (
+                // Eye icon
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7Z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg>
+              )}
             </button>
           </div>
         </div>
@@ -921,41 +389,111 @@ function ModelConfigPage() {
             className="mt-2 w-full rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2 text-[13px] text-[var(--lp-text)] outline-none placeholder:text-[var(--lp-soft-text)]"
             placeholder={provider.baseUrl || "https://api.example.com/v1"}
             value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            onChange={(e) => { setBaseUrl(e.target.value); setSaveStatus("idle"); }}
             onBlur={handleBaseUrlBlur}
           />
           <div className="mt-1 text-[11px] text-[var(--lp-soft-text)]">{t("modelConfig.apiProxyHint")}</div>
+        </div>
+
+        {/* Save button — explicit save for this provider's config */}
+        <div className="mt-4 flex items-center justify-end gap-3">
+          {saveStatus === "saved" ? (
+            <span className="inline-flex items-center gap-1 text-[12px] text-green-400">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              {t("modelConfig.saved")}
+            </span>
+          ) : saveStatus === "error" ? (
+            <span className="text-[12px] text-red-400">{t("modelConfig.saveFailed")}</span>
+          ) : null}
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-white px-4 py-2 text-[13px] font-medium text-[#151515] disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => void handleSaveProvider()}
+            disabled={saveStatus === "saving"}
+          >
+            {saveStatus === "saving" ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+            )}
+            {t("modelConfig.save")}
+          </button>
         </div>
 
         {/* Connection Test */}
         <div className="mt-5">
           <div className="text-[14px] font-medium text-[var(--lp-text)]">{t("modelConfig.connectTest")}</div>
           <div className="mt-2 flex items-center gap-3">
-            <select
-              className="flex-1 rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2 text-[13px] text-[var(--lp-text)] outline-none"
-              value={connectModel}
-              onChange={(e) => setConnectModel(e.target.value)}
-            >
-              {provider.models.length > 0 ? provider.models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>) : <option>—</option>}
-            </select>
+            <div className="relative flex-1">
+              <select
+                className="w-full appearance-none rounded-lg border border-[var(--lp-border)] bg-transparent px-3 py-2 pr-9 text-[13px] text-[var(--lp-text)] outline-none"
+                value={connectModel}
+                onChange={(e) => setConnectModel(e.target.value)}
+              >
+                {provider.models.length > 0 ? provider.models.map((m) => <option key={m.id} value={m.id}>{m.id}</option>) : <option>—</option>}
+              </select>
+              <svg
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--lp-soft-text)]"
+                width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"
+              >
+                <path d="M2.5 4.5L6 8L9.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
             <button
-              className={`rounded-lg border px-4 py-2 text-[13px] hover:bg-white/[0.04] ${
-                connectStatus === "success" ? "border-green-500/50 text-green-400" :
-                connectStatus === "error" ? "border-red-500/50 text-red-400" :
+              className={`inline-flex items-center gap-1.5 rounded-lg border px-4 py-2 text-[13px] transition disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent ${
+                connectStatus === "success" ? "border-green-500/50 text-green-400 hover:bg-green-500/5" :
+                connectStatus === "error" ? "border-red-500/50 text-red-400 hover:bg-red-500/5" :
                 connectStatus === "testing" ? "border-yellow-500/50 text-yellow-400" :
-                "border-[var(--lp-border)] text-[var(--lp-text)]"
+                "border-[var(--lp-border)] text-[var(--lp-text)] hover:bg-white/[0.04]"
               }`}
               type="button"
               onClick={() => void handleConnectTest()}
-              disabled={connectStatus === "testing"}
+              disabled={connectStatus === "testing" || !apiKey.trim()}
+              title={!apiKey.trim() ? t("modelConfig.fillApiKeyFirst") : undefined}
             >
-              {connectStatus === "testing" ? "⏳" : connectStatus === "success" ? "✓ " : connectStatus === "error" ? "✗ " : ""}{t("modelConfig.check")}
+              {connectStatus === "testing" ? (
+                // Spinner
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="animate-spin" aria-hidden="true">
+                  <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+                </svg>
+              ) : connectStatus === "success" ? (
+                // Check
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : connectStatus === "error" ? (
+                // X
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              ) : null}
+              <span>{t("modelConfig.check")}</span>
             </button>
           </div>
+          {connectMessage ? (
+            <div className={`mt-2 text-[12px] ${
+              connectStatus === "success" ? "text-green-400" :
+              connectStatus === "error" ? "text-red-400" :
+              "text-[var(--lp-soft-text)]"
+            }`}>
+              {connectMessage}
+            </div>
+          ) : null}
+        </div>
         </div>
 
         {/* Model List */}
-        <div className="mt-6 rounded-2xl border border-[var(--lp-border)] bg-[var(--lp-panel)] p-4">
+        <div className="mt-6 flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-[var(--lp-border)] bg-[var(--lp-panel)] p-4">
+          <div className="flex-shrink-0">
           <div className="flex items-center justify-between">
             <div className="text-[14px] font-medium text-[var(--lp-text)]">{t("modelConfig.modelList")}</div>
             <span className="rounded-full bg-white/[0.06] px-2 py-0.5 text-[11px] text-[var(--lp-soft-text)]">{allModelsForProvider.length}</span>
@@ -969,11 +507,12 @@ function ModelConfigPage() {
             />
             <button className="rounded-lg border border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)]/78 hover:bg-white/[0.04]" type="button" onClick={() => void handleEnableAll()}>{t("modelConfig.enableAll")}</button>
             <button className="rounded-lg border border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)]/78 hover:bg-white/[0.04]" type="button" onClick={() => void handleDisableAll()}>{t("modelConfig.disableAll")}</button>
-            <button className="rounded-lg border border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)] hover:bg-white/[0.04]" type="button">↻ {t("modelConfig.fetchModels")}</button>
-            <button className="rounded-lg border border-dashed border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)] hover:bg-white/[0.04]" type="button" onClick={() => setAddModelModalOpen(true)}>＋ 添加模型</button>
+            <button className="rounded-lg border border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)] hover:bg-white/[0.04] inline-flex items-center gap-1" type="button"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> {t("modelConfig.fetchModels")}</button>
+            <button className="rounded-lg border border-dashed border-[var(--lp-border)] px-3 py-1.5 text-[12px] text-[var(--lp-text)] hover:bg-white/[0.04]" type="button" onClick={() => setAddModelModalOpen(true)}>{t("modelConfig.addModelBtn")}</button>
+          </div>
           </div>
           {filteredModelsDisplay.length > 0 ? (
-            <div className="mt-3 flex flex-col gap-1">
+            <div className="mt-3 min-h-0 flex-1 overflow-y-auto flex flex-col gap-1">
               {filteredModelsDisplay.map((m) => {
                 const enabled = getModelEnabled(m.id);
                 const isCustomModel = (customModels[provider.id] || []).some((cm) => cm.id === m.id);
@@ -982,14 +521,14 @@ function ModelConfigPage() {
                     <span className="flex items-center gap-2 text-[13px] text-[var(--lp-text)]">
                       {m.id}
                       {m.think ? <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] font-medium text-purple-300">Think</span> : null}
-                      {isCustomModel ? <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-300">自定义</span> : null}
+                      {isCustomModel ? <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-300">{t("modelConfig.customBadge")}</span> : null}
                     </span>
                     <div className="flex items-center gap-2">
                       {m.think ? (
-                        <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md text-[14px] text-[var(--lp-soft-text)] hover:bg-white/[0.06]" title="配置 Think" onClick={() => setThinkModalModel(m.id)}>⚙</button>
+                        <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md text-[14px] text-[var(--lp-soft-text)] hover:bg-white/[0.06]" title={t("modelConfig.configThink")} onClick={() => setThinkModalModel(m.id)}>⚙</button>
                       ) : null}
                       {isCustomModel ? (
-                        <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md text-[14px] text-red-400/60 hover:bg-red-500/10 hover:text-red-400" title="删除模型" onClick={() => handleDeleteModel(m.id)}>✕</button>
+                        <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md text-[14px] text-red-400/60 hover:bg-red-500/10 hover:text-red-400" title={t("modelConfig.deleteModel")} onClick={() => handleDeleteModel(m.id)}>🗑</button>
                       ) : null}
                       <button type="button" className={`h-5 w-9 rounded-full transition ${enabled ? "bg-[#10A37F]" : "bg-white/10"}`} onClick={() => void toggleModel(m.id)}>
                         <div className={`h-4 w-4 rounded-full bg-white shadow transition ${enabled ? "translate-x-[18px]" : "translate-x-[2px]"}`} />
@@ -1001,7 +540,7 @@ function ModelConfigPage() {
             </div>
           ) : (
             <div className="mt-4 text-center text-[13px] text-[var(--lp-soft-text)]">
-              {allModelsForProvider.length === 0 ? t("modelConfig.comingSoon") : "无匹配模型"}
+              {allModelsForProvider.length === 0 ? t("modelConfig.comingSoon") : t("modelConfig.noMatchModel")}
             </div>
           )}
         </div>
@@ -1014,7 +553,7 @@ function ModelConfigPage() {
               type="button"
               onClick={() => void handleDeleteProvider()}
             >
-              删除此服务商
+              {t("modelConfig.deleteThisProvider")}
             </button>
           </div>
         ) : null}
@@ -1026,6 +565,17 @@ function ModelConfigPage() {
           onAdd={(p) => {
             setCustomProviders((prev) => [...prev, p]);
             setSelectedProvider(p.id);
+            if (window.electronAPI?.saveProviderConfig) {
+              void window.electronAPI.saveProviderConfig({
+                id: p.id,
+                name: p.name,
+                apiKey: "",
+                baseUrl: p.baseUrl,
+                enabled: true,
+                protocol: p.protocol,
+                isCustom: true
+              });
+            }
           }}
         />
       ) : null}
@@ -1034,6 +584,7 @@ function ModelConfigPage() {
         <ThinkConfigModal
           modelId={thinkModalModel}
           providerId={provider.id}
+          thinkLevels={allModelsForProvider.find((m) => m.id === thinkModalModel)?.thinkLevels}
           config={modelConfigs.find((c) => c.modelId === thinkModalModel)}
           onClose={() => setThinkModalModel(null)}
           onSave={(c) => void handleSaveThinkConfig(c)}
@@ -1051,15 +602,144 @@ function ModelConfigPage() {
   );
 }
 
-const THINK_BUDGET_LABELS: Record<ThinkBudget, string> = {
-  none: "关闭",
-  minimal: "极低",
-  low: "低",
-  medium: "中",
-  high: "高",
-  max: "超高",
-  xhigh: "极高"
-};
+/**
+ * Anchored dropdown positioning hook.
+ *
+ * Returns a ref to attach to the trigger button plus the computed viewport
+ * coordinates (`left`, `bottom`) for a dropdown that opens UP from the
+ * trigger. The dropdown should be rendered via `createPortal` so that it
+ * escapes ancestor `overflow:hidden`/`overflow:auto` clipping (which is the
+ * reason the toolbar dropdowns silently "did nothing" before — they were
+ * being clipped by the input box wrapper).
+ */
+function useAnchoredDropdown(open: boolean) {
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
+  const [coords, setCoords] = useState<{ left: number; bottom: number; minWidth: number }>({
+    left: 0,
+    bottom: 0,
+    minWidth: 0
+  });
+  useLayoutEffect(() => {
+    if (!open) return;
+    const el = anchorRef.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setCoords({
+        left: r.left,
+        bottom: window.innerHeight - r.top + 8,
+        minWidth: r.width
+      });
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("scroll", update, true);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("scroll", update, true);
+    };
+  }, [open]);
+  return { anchorRef, coords };
+}
+
+/**
+ * Mode selector — replaces the legacy "对话模式▾" placeholder button.
+ *
+ * Shows the active mode (icon + localized name) and pops a dropdown with all
+ * 8 built-in modes. Switching mode is purely UI-side: it does not flush the
+ * conversation; the next outgoing message picks up the new mode's
+ * systemPrompt + default sampling hints in the main process.
+ */
+function ModeSelector({
+  selectedModeId,
+  onChange
+}: {
+  selectedModeId: ChatModeId;
+  onChange: (id: ChatModeId) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const { anchorRef, coords } = useAnchoredDropdown(open);
+  const active = CHAT_MODE_MAP[selectedModeId] ?? CHAT_MODE_MAP.chat;
+
+  // Each accent maps to a small bg/text/border tint class set.
+  const accentTints: Record<string, { btn: string; ring: string; chip: string }> = {
+    slate:    { btn: "border-slate-400/30 bg-slate-400/10 text-slate-200",    ring: "ring-slate-400/40",    chip: "bg-slate-400/15 text-slate-200" },
+    amber:    { btn: "border-amber-400/40 bg-amber-400/15 text-amber-200",    ring: "ring-amber-400/40",    chip: "bg-amber-400/20 text-amber-100" },
+    emerald:  { btn: "border-emerald-400/40 bg-emerald-400/15 text-emerald-200", ring: "ring-emerald-400/40", chip: "bg-emerald-400/20 text-emerald-100" },
+    sky:      { btn: "border-sky-400/40 bg-sky-400/15 text-sky-200",          ring: "ring-sky-400/40",      chip: "bg-sky-400/20 text-sky-100" },
+    violet:   { btn: "border-violet-400/40 bg-violet-400/15 text-violet-200", ring: "ring-violet-400/40",   chip: "bg-violet-400/20 text-violet-100" },
+    rose:     { btn: "border-rose-400/40 bg-rose-400/15 text-rose-200",       ring: "ring-rose-400/40",     chip: "bg-rose-400/20 text-rose-100" },
+    cyan:     { btn: "border-cyan-400/40 bg-cyan-400/15 text-cyan-200",       ring: "ring-cyan-400/40",     chip: "bg-cyan-400/20 text-cyan-100" },
+    fuchsia:  { btn: "border-fuchsia-400/40 bg-fuchsia-400/15 text-fuchsia-200", ring: "ring-fuchsia-400/40", chip: "bg-fuchsia-400/20 text-fuchsia-100" }
+  };
+  const tint = accentTints[active.accent] ?? accentTints.slate;
+
+  return (
+    <>
+      <button
+        ref={anchorRef}
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] transition ${tint.btn} hover:brightness-110`}
+        title={t(active.descKey)}
+      >
+        <span className="text-[14px] leading-none">{active.icon}</span>
+        <span className="font-medium">{t(active.nameKey)}</span>
+        <span className="text-current opacity-60">▾</span>
+      </button>
+
+      {open ? createPortal(
+        <>
+          <div className="fixed inset-0 z-[200]" onClick={() => setOpen(false)} />
+          <div
+            className="fixed z-[210] w-[320px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
+            style={{ left: coords.left, bottom: coords.bottom }}
+          >
+            <div className="border-b border-white/[0.06] px-4 py-2.5 text-[11px] uppercase tracking-wide text-[var(--lp-soft-text)]">
+              {t("modes.dropdownTitle")}
+            </div>
+            <div className="max-h-[420px] overflow-y-auto px-2 py-2">
+              {CHAT_MODES.map((mode) => {
+                const isActive = mode.id === selectedModeId;
+                const mt = accentTints[mode.accent] ?? accentTints.slate;
+                return (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    className={`mb-1 flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition ${
+                      isActive
+                        ? `${mt.chip} ring-1 ${mt.ring}`
+                        : "hover:bg-white/[0.04]"
+                    }`}
+                    onClick={() => { onChange(mode.id); setOpen(false); }}
+                  >
+                    <span className="mt-0.5 text-[18px] leading-none">{mode.icon}</span>
+                    <span className="flex-1 min-w-0">
+                      <span className="flex items-center gap-1.5">
+                        <span className={`text-[13px] font-medium ${isActive ? "" : "text-[var(--lp-text)]"}`}>
+                          {t(mode.nameKey)}
+                        </span>
+                        {isActive ? <span className="text-[10px] opacity-70">●</span> : null}
+                      </span>
+                      <span className={`mt-0.5 block text-[11.5px] leading-snug ${isActive ? "opacity-90" : "text-[var(--lp-soft-text)]"}`}>
+                        {t(mode.descKey)}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="border-t border-white/[0.06] px-4 py-2 text-[10.5px] text-[var(--lp-soft-text)]">
+              {t("modes.footerHint")}
+            </div>
+          </div>
+        </>,
+        document.body
+      ) : null}
+    </>
+  );
+}
 
 function ModelSelector({
   selectedProvider,
@@ -1067,7 +747,8 @@ function ModelSelector({
   thinkBudget,
   onChangeProvider,
   onChangeModel,
-  onChangeBudget
+  onChangeBudget,
+  providerConfigs
 }: {
   selectedProvider: string;
   selectedModel: string;
@@ -1075,52 +756,141 @@ function ModelSelector({
   onChangeProvider: (id: string) => void;
   onChangeModel: (id: string) => void;
   onChangeBudget: (b: ThinkBudget) => void;
+  /** Provider configs from DB; used to filter out disabled / unkeyed providers. */
+  providerConfigs?: Record<string, ProviderConfig>;
 }) {
-  const [open, setOpen] = useState(false);
-  const provider = AI_PROVIDERS_DEFAULT.find((p) => p.id === selectedProvider) ?? AI_PROVIDERS_DEFAULT[0];
+  const { t } = useTranslation();
+  const [providerOpen, setProviderOpen] = useState(false);
+  const [modelOpen, setModelOpen] = useState(false);
+  const providerAnchor = useAnchoredDropdown(providerOpen);
+  const modelAnchor = useAnchoredDropdown(modelOpen);
+
+  // Filter to providers that are enabled AND have an apiKey set.
+  // Falls back to all defaults when no configs are loaded yet (first render).
+  const availableProviders = useMemo(() => {
+    if (!providerConfigs || Object.keys(providerConfigs).length === 0) return AI_PROVIDERS_DEFAULT;
+    return AI_PROVIDERS_DEFAULT.filter((p) => {
+      const cfg = providerConfigs[p.id];
+      if (!cfg) return false;
+      return cfg.enabled && !!cfg.apiKey;
+    });
+  }, [providerConfigs]);
+
+  const provider = availableProviders.find((p) => p.id === selectedProvider)
+    ?? availableProviders[0]
+    ?? AI_PROVIDERS_DEFAULT[0];
   const model = provider.models.find((m) => m.id === selectedModel);
-  const displayName = selectedModel ? selectedModel.split("/").pop()! : "选择模型";
+  const modelDisplay = selectedModel ? selectedModel.split("/").pop()! : t("modelSelector.selectModel");
+  const noAvailable = availableProviders.length === 0;
+
+  function selectProvider(id: string) {
+    onChangeProvider(id);
+    const next = availableProviders.find((p) => p.id === id) ?? AI_PROVIDERS_DEFAULT.find((p) => p.id === id);
+    if (next && next.models.length > 0) onChangeModel(next.models[0].id);
+    setProviderOpen(false);
+  }
+
+  function selectModel(id: string) {
+    onChangeModel(id);
+    setModelOpen(false);
+  }
 
   return (
-    <div className="relative">
+    <>
+      {/* Provider button */}
       <button
+        ref={providerAnchor.anchorRef}
         type="button"
         className="flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] bg-white/[0.03] px-3 py-1.5 text-[13px] text-[var(--lp-text)]/88 hover:bg-white/[0.06]"
-        onClick={() => setOpen(!open)}
+        onClick={() => { setProviderOpen((v) => !v); setModelOpen(false); }}
+        title={t("modelSelector.selectProvider")}
       >
         <span className="inline-flex h-4 w-4 items-center justify-center">
-          {PROVIDER_ICON_MAP[provider.id] ? (() => { const Icon = PROVIDER_ICON_MAP[provider.id]; return <Icon size={14} />; })() : <span className="text-[10px]">{provider.name[0]}</span>}
+          {PROVIDER_ICON_MAP[provider.id]
+            ? (() => { const Icon = PROVIDER_ICON_MAP[provider.id]; return <Icon size={14} />; })()
+            : <span className="text-[10px]">{provider.name[0]}</span>}
         </span>
-        <span className="max-w-[140px] truncate">{displayName}</span>
-        {model?.think ? <span className="rounded bg-purple-500/20 px-1 py-0.5 text-[9px] font-medium text-purple-300">{THINK_BUDGET_LABELS[thinkBudget]}</span> : null}
-        <span className="text-[var(--lp-soft-text)]">⌄</span>
+        <span className="max-w-[120px] truncate">{provider.name}</span>
+        <span className="text-[var(--lp-soft-text)]">▾</span>
       </button>
 
-      {open ? (
-        <div className="absolute bottom-[calc(100%+8px)] left-0 z-40 w-[340px] max-h-[420px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl">
-          <div className="flex max-h-[420px] flex-col">
-            {/* Provider tabs */}
-            <div className="flex gap-1 overflow-x-auto border-b border-white/[0.06] px-3 py-2">
-              {AI_PROVIDERS_DEFAULT.map((p) => (
+      {providerOpen ? createPortal(
+        <>
+          <div className="fixed inset-0 z-[200]" onClick={() => setProviderOpen(false)} />
+          <div
+            className="fixed z-[210] w-[240px] max-h-[360px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
+            style={{ left: providerAnchor.coords.left, bottom: providerAnchor.coords.bottom }}
+          >
+            <div className="border-b border-white/[0.06] px-3 py-2 text-[11px] text-[var(--lp-soft-text)]">{t("modelSelector.providerHeading")}</div>
+            <div className="max-h-[300px] overflow-y-auto px-2 py-2">
+              {noAvailable ? (
+                <div className="p-3 text-center text-[12px] text-[var(--lp-soft-text)]">
+                  {t("modelSelector.noProvidersGoConfig")}
+                </div>
+              ) : availableProviders.map((p) => (
                 <button
                   key={p.id}
                   type="button"
-                  className={`flex-shrink-0 rounded-md px-2 py-1 text-[11px] transition ${selectedProvider === p.id ? "bg-white/[0.1] text-[var(--lp-text)]" : "text-[var(--lp-soft-text)] hover:bg-white/[0.04]"}`}
-                  onClick={() => { onChangeProvider(p.id); if (p.models.length > 0) onChangeModel(p.models[0].id); }}
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] transition ${selectedProvider === p.id ? "bg-white/[0.08] text-[var(--lp-text)]" : "text-[var(--lp-text)]/78 hover:bg-white/[0.04]"}`}
+                  onClick={() => selectProvider(p.id)}
                 >
-                  {p.name}
+                  <span className="flex items-center gap-2">
+                    <span className="inline-flex h-4 w-4 items-center justify-center">
+                      {PROVIDER_ICON_MAP[p.id]
+                        ? (() => { const Icon = PROVIDER_ICON_MAP[p.id]; return <Icon size={14} />; })()
+                        : <span className="text-[10px]">{p.name[0]}</span>}
+                    </span>
+                    <span className="truncate">{p.name}</span>
+                  </span>
+                  {selectedProvider === p.id ? <span className="text-[#10A37F]">✓</span> : null}
                 </button>
               ))}
             </div>
+          </div>
+        </>,
+        document.body
+      ) : null}
 
-            {/* Model list */}
-            <div className="flex-1 overflow-y-auto px-2 py-2">
-              {provider.models.map((m) => (
+      {/* Model button */}
+      <button
+        ref={modelAnchor.anchorRef}
+        type="button"
+        className="flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] bg-white/[0.03] px-3 py-1.5 text-[13px] text-[var(--lp-text)]/88 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+        onClick={() => { setModelOpen((v) => !v); setProviderOpen(false); }}
+        disabled={provider.models.length === 0}
+        title={t("modelSelector.selectModel")}
+      >
+        <span className="max-w-[160px] truncate">{modelDisplay}</span>
+        {model?.think ? (
+          <span className="rounded bg-purple-500/20 px-1 py-0.5 text-[9px] font-medium text-purple-300">
+            {model.thinkLevels && model.thinkLevels.length > 0 ? THINK_BUDGET_LABELS[thinkBudget] : "Think"}
+          </span>
+        ) : null}
+        <span className="text-[var(--lp-soft-text)]">▾</span>
+      </button>
+
+      {modelOpen ? createPortal(
+        <>
+          <div className="fixed inset-0 z-[200]" onClick={() => setModelOpen(false)} />
+          <div
+            className="fixed z-[210] w-[280px] max-h-[420px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
+            style={{ left: modelAnchor.coords.left, bottom: modelAnchor.coords.bottom }}
+          >
+            <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2 text-[11px]">
+              <span className="text-[var(--lp-soft-text)]">{t("modelSelector.modelHeading")}</span>
+              <span className="text-[var(--lp-soft-text)]">{t("modelSelector.fromProvider", { name: provider.name })}</span>
+            </div>
+            <div className="max-h-[300px] overflow-y-auto px-2 py-2">
+              {provider.models.length === 0 ? (
+                <div className="p-3 text-center text-[12px] text-[var(--lp-soft-text)]">
+                  {t("modelSelector.noModelsGoConfig")}
+                </div>
+              ) : provider.models.map((m) => (
                 <button
                   key={m.id}
                   type="button"
                   className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] transition ${selectedModel === m.id ? "bg-white/[0.08] text-[var(--lp-text)]" : "text-[var(--lp-text)]/78 hover:bg-white/[0.04]"}`}
-                  onClick={() => { onChangeModel(m.id); if (!m.think) setOpen(false); }}
+                  onClick={() => selectModel(m.id)}
                 >
                   <span className="flex items-center gap-2">
                     <span className="truncate">{m.id}</span>
@@ -1131,17 +901,17 @@ function ModelSelector({
               ))}
             </div>
 
-            {/* Think budget selector */}
-            {model?.think ? (
+            {/* Think budget selector — only when the current model exposes granular levels */}
+            {model?.think && model.thinkLevels && model.thinkLevels.length > 0 ? (
               <div className="border-t border-white/[0.06] px-3 py-2.5">
-                <div className="mb-1.5 text-[11px] text-[var(--lp-soft-text)]">推理程度</div>
+                <div className="mb-1.5 text-[11px] text-[var(--lp-soft-text)]">{t("modelSelector.reasoningEffort")}</div>
                 <div className="flex flex-wrap gap-1.5">
-                  {(["none", "minimal", "low", "medium", "high", "max", "xhigh"] as ThinkBudget[]).map((b) => (
+                  {model.thinkLevels.map((b) => (
                     <button
                       key={b}
                       type="button"
                       className={`rounded-md border px-2 py-1 text-[11px] transition ${thinkBudget === b ? "border-[#10A37F] bg-[#10A37F]/10 text-[#10A37F]" : "border-[var(--lp-border)] text-[var(--lp-text)]/70 hover:bg-white/[0.04]"}`}
-                      onClick={() => { onChangeBudget(b); setOpen(false); }}
+                      onClick={() => { onChangeBudget(b); setModelOpen(false); }}
                     >
                       {THINK_BUDGET_LABELS[b]}
                     </button>
@@ -1150,18 +920,17 @@ function ModelSelector({
               </div>
             ) : null}
           </div>
-        </div>
+        </>,
+        document.body
       ) : null}
-
-      {/* Click outside to close */}
-      {open ? <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} /> : null}
-    </div>
+    </>
   );
 }
 
 export function App() {
   const { t, i18n } = useTranslation();
   const {
+    appInfo,
     setAppInfo,
     theme,
     background,
@@ -1173,13 +942,498 @@ export function App() {
     setLanguage
   } = useUiStore();
   const [themeModalOpen, setThemeModalOpen] = useState(false);
-  const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activePage, setActivePage] = useState<"chat" | "modelConfig">("chat");
-  const [sidebarWidth, setSidebarWidth] = useState(280);
-  const [chatProvider, setChatProvider] = useState(AI_PROVIDERS_DEFAULT[0].id);
-  const [chatModel, setChatModel] = useState(AI_PROVIDERS_DEFAULT[0].models[0].id);
-  const [chatThinkBudget, setChatThinkBudget] = useState<ThinkBudget>("medium");
+  const [activePage, setActivePage] = usePersistedState<"chat" | "modelConfig">("app.activePage", "chat");
+  const [sidebarWidth, setSidebarWidth] = usePersistedState<number>("app.sidebarWidth", 280);
+  const [conversationsOpen, setConversationsOpen] = usePersistedState<boolean>("sidebar.conversationsOpen", true);
+  const [projectsOpen, setProjectsOpen] = usePersistedState<boolean>("sidebar.projectsOpen", true);
+  const [chatProvider, setChatProvider] = usePersistedState<string>("chat.provider", AI_PROVIDERS_DEFAULT[0].id);
+  const [chatModel, setChatModel] = usePersistedState<string>("chat.model", AI_PROVIDERS_DEFAULT[0].models[0].id);
+  const [chatThinkBudget, setChatThinkBudget] = usePersistedState<ThinkBudget>("chat.thinkBudget", "medium");
+  const [chatModeId, setChatModeId] = usePersistedState<ChatModeId>("chat.modeId", "chat");
+  const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
+  const [providerCache, setProviderCache] = useState<Record<string, ProviderConfig>>({});
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [conversationPreviews, setConversationPreviews] = useState<Record<string, { role: string; content: string; createdAt: number } | null>>({});
+  const [projects, setProjects] = useState<Project[]>([]);
+  /** Per-project expansion in the sidebar: when true, that project shows
+   * its child conversations underneath. Independent from `projectsOpen`
+   * (which collapses the entire "Projects" section). */
+  const [expandedProjectIds, setExpandedProjectIds] = usePersistedState<Record<string, boolean>>(
+    "sidebar.expandedProjectIds",
+    {}
+  );
+
+  /**
+   * Active per-conversation streams. Stored at the App level (NOT inside
+   * ChatPanel) so the IPC subscription stays alive when the user switches
+   * conversations or navigates to another page. When they come back, the
+   * panel rehydrates from this map.
+   */
+  type StreamState = {
+    streamId: string;
+    assistantMessageId: string;
+    text: string;
+    reasoning: string;
+    status: "streaming" | "done" | "error";
+    errorMessage?: string;
+    startedAt: number;
+  };
+  const [activeStreams, setActiveStreams] = useState<Record<string, StreamState>>({});
+  const activeStreamsRef = useRef(activeStreams);
+  activeStreamsRef.current = activeStreams;
+
+  /**
+   * Guarded conversation setter. Two jobs:
+   *   1. DIAGNOSTIC: warn (with stack) whenever activeConversation transitions
+   *      to `null` while a stream is in flight — this used to silently reset
+   *      the chat UI to the "new conversation" hero mid-stream.
+   *   2. GUARD: actually refuse the null write while any stream still has
+   *      status === "streaming" — protects the user's in-progress output.
+   *
+   * Pass-through for any non-null write; behaves like the raw setter.
+   */
+  const setActiveConversationSafe = useCallback((next: Conversation | null) => {
+    if (next === null) {
+      const streamingIds = Object.keys(activeStreamsRef.current).filter(
+        (id) => activeStreamsRef.current[id]?.status === "streaming"
+      );
+      if (streamingIds.length > 0) {
+        console.warn(
+          "[lp/conv-guard] refused to clear activeConversation while streaming:",
+          streamingIds,
+          new Error().stack
+        );
+        return;
+      }
+      console.info("[lp/conv-guard] activeConversation -> null (no stream in flight)");
+    }
+    setActiveConversation(next);
+  }, []);
+
+  const refreshConversations = useCallback(async () => {
+    if (!window.electronAPI?.listConversations) return;
+    const list = await window.electronAPI.listConversations(null);
+    setConversations(list);
+    // Fetch last-message previews for the sidebar in a single round-trip.
+    if (list.length > 0 && window.electronAPI?.getConversationPreviews) {
+      const ids = list.map((c) => c.id);
+      const previews = await window.electronAPI.getConversationPreviews(ids);
+      setConversationPreviews(previews);
+    } else {
+      setConversationPreviews({});
+    }
+  }, []);
+
+  const refreshProjects = useCallback(async () => {
+    if (!window.electronAPI?.listProjects) return;
+    const list = await window.electronAPI.listProjects();
+    setProjects(list);
+  }, []);
+
+  /**
+   * Start a chat stream for a conversation. This:
+   *   1. appends the user message + assistant placeholder to DB (so they
+   *      persist even if the user closes the app mid-stream)
+   *   2. resolves provider credentials
+   *   3. calls chat:start-stream via IPC and subscribes to chunks
+   *   4. accumulates into `activeStreams[convId]` so any mount of ChatPanel
+   *      can render the in-progress state
+   *   5. on done/error, persists final content to DB and clears the entry
+   *
+   * The actual subscription unsubscribe is preserved in a ref so cancelStream
+   * can detach it cleanly.
+   */
+  const streamUnsubsRef = useRef<Record<string, () => void>>({});
+  // Ref-based provider resolver so startChatStream can be declared above
+  // resolveProvider without TDZ. The ref is updated by an effect once
+  // resolveProvider is in scope.
+  const resolveProviderRef = useRef<((id: string) => Promise<{ apiKey: string; baseUrl: string; protocol: string } | null>) | null>(null);
+
+  const startChatStream = useCallback(async (params: {
+    conversation: Conversation;
+    /**
+     * Text of the new user message to append. When this is `null`/`undefined`
+     * we treat this as a RETRY — we don't write a new user row, we just
+     * re-run the assistant pipeline against the existing tail user message.
+     */
+    userText?: string | null;
+    providerId: string;
+    modelId: string;
+    thinkBudget: ThinkBudget;
+    thinkEnabled: boolean;
+    modeId: string;
+    attachments?: ChatAttachment[];
+    /**
+     * When set, this prior assistant message (a failed placeholder or an
+     * `⚠️` error marker) is deleted BEFORE we list context and start a
+     * fresh stream. Used by the retry button on a failed bubble.
+     */
+    retryFromAssistantId?: string;
+  }): Promise<{ ok: true } | { ok: false; reason: "no-api" | "no-key" | "no-provider" | "send-failed"; message?: string }> => {
+    const api = window.electronAPI;
+    if (!api?.startChatStream || !api.appendMessage || !api.onChatStream) return { ok: false, reason: "no-api" };
+    const resolve = resolveProviderRef.current;
+    if (!resolve) return { ok: false, reason: "no-api" };
+    const providerInfo = await resolve(params.providerId);
+    if (!providerInfo) return { ok: false, reason: "no-provider" };
+    if (!providerInfo.apiKey) return { ok: false, reason: "no-key" };
+
+    // If this is a retry, drop the failed assistant row first so it's not
+    // listed in context (and the UI bubble disappears immediately when we
+    // refresh messages a few lines down).
+    if (params.retryFromAssistantId && api.deleteMessage) {
+      try { await api.deleteMessage(params.retryFromAssistantId); } catch { /* ignore */ }
+    }
+
+    // Persist the user message + assistant placeholder to DB up front. Main
+    // process auto-titles on the first user message; this also makes the
+    // sidebar preview update immediately. On retry we skip the user-append
+    // because the original user message is still in the DB.
+    if (params.userText != null) {
+      const userMsg = await api.appendMessage({
+        conversationId: params.conversation.id,
+        role: "user",
+        content: params.userText,
+        attachments: params.attachments && params.attachments.length > 0 ? params.attachments : null
+      });
+      void userMsg;
+    }
+    const placeholderAssistant = await api.appendMessage({
+      conversationId: params.conversation.id,
+      role: "assistant",
+      content: "",
+      reasoning: null
+    });
+
+    // Load the persisted history for the context window. The main-process
+    // compressMessages() will trim further per the active mode's budget.
+    //
+    // Filter rules:
+    //   1. Exclude this turn's own placeholder assistant (still empty).
+    //   2. Exclude ANY message whose content is blank AND has no attachments
+    //      — these are leftover placeholders from previously cancelled /
+    //      failed / network-errored streams. Sending them to OpenAI /
+    //      Moonshot-compatible endpoints triggers: "the message at position N
+    //      with role 'assistant' must not be empty".
+    //      Note: a user message with image attachments but empty text is
+    //      perfectly valid (vision-only prompt), so we keep it.
+    const persistedMessages = await api.listMessages(params.conversation.id);
+    const contextMessages = persistedMessages
+      .filter((m) => m.id !== placeholderAssistant.id)
+      .filter((m) => (m.content ?? "").trim().length > 0 || (m.attachments && m.attachments.length > 0))
+      .map((m) => ({ role: m.role, content: m.content, attachments: m.attachments }));
+
+    let started: { streamId: string };
+    try {
+      started = await api.startChatStream({
+        providerId: params.providerId,
+        protocol: providerInfo.protocol,
+        baseUrl: providerInfo.baseUrl,
+        apiKey: providerInfo.apiKey,
+        model: params.modelId,
+        messages: contextMessages,
+        thinkEnabled: params.thinkEnabled,
+        thinkBudget: params.thinkBudget,
+        conversationId: params.conversation.id,
+        assistantMessageId: placeholderAssistant.id,
+        modeId: params.modeId
+      });
+    } catch (e) {
+      return { ok: false, reason: "send-failed", message: (e as Error).message };
+    }
+
+    const convId = params.conversation.id;
+    setActiveStreams((prev) => ({
+      ...prev,
+      [convId]: {
+        streamId: started.streamId,
+        assistantMessageId: placeholderAssistant.id,
+        text: "",
+        reasoning: "",
+        status: "streaming",
+        startedAt: Date.now()
+      }
+    }));
+
+    // Watchdog: if no events arrive for a long time, force the stream to end
+    // so the sidebar dot doesn't spin forever in the unlikely case the main
+    // process safety timeouts also fail. Re-armed on every received event.
+    const WATCHDOG_MS = 90_000;
+    let watchdog: ReturnType<typeof setTimeout> | null = null;
+    const finalize = (errorMessage?: string) => {
+      const dispose = streamUnsubsRef.current[convId];
+      if (dispose) {
+        dispose();
+        delete streamUnsubsRef.current[convId];
+      }
+      if (watchdog) { clearTimeout(watchdog); watchdog = null; }
+      if (errorMessage) {
+        setActiveStreams((prev) => {
+          const cur = prev[convId];
+          if (!cur) return prev;
+          return { ...prev, [convId]: { ...cur, status: "error", errorMessage } };
+        });
+      }
+      void refreshConversations();
+      setTimeout(() => {
+        setActiveStreams((prev) => {
+          const next = { ...prev };
+          delete next[convId];
+          return next;
+        });
+      }, 500);
+    };
+    const armWatchdog = () => {
+      if (watchdog) clearTimeout(watchdog);
+      watchdog = setTimeout(() => {
+        console.warn(`[chat] renderer watchdog: no events for ${WATCHDOG_MS}ms, conv=${convId}, force-ending`);
+        void window.electronAPI?.cancelChatStream?.(started.streamId);
+        finalize(t("chatStream.timeoutAutoStopped"));
+      }, WATCHDOG_MS);
+    };
+    armWatchdog();
+
+    const unsubscribe = api.onChatStream(started.streamId, (ev) => {
+      armWatchdog();
+      setActiveStreams((prev) => {
+        const cur = prev[convId];
+        if (!cur) return prev;
+        if (ev.type === "text") {
+          return { ...prev, [convId]: { ...cur, text: cur.text + ev.text } };
+        }
+        if (ev.type === "reasoning") {
+          return { ...prev, [convId]: { ...cur, reasoning: cur.reasoning + ev.text } };
+        }
+        if (ev.type === "error") {
+          return { ...prev, [convId]: { ...cur, status: "error", errorMessage: ev.message } };
+        }
+        if (ev.type === "done") {
+          return { ...prev, [convId]: { ...cur, status: "done" } };
+        }
+        return prev;
+      });
+      if (ev.type === "done" || ev.type === "error") {
+        finalize();
+      }
+    });
+    streamUnsubsRef.current[convId] = unsubscribe;
+
+    // Update the sidebar immediately to reflect the new user message + auto-title.
+    void refreshConversations();
+    return { ok: true };
+  }, [refreshConversations, t]);
+
+  const cancelChatStream = useCallback((conversationId: string) => {
+    const cur = activeStreamsRef.current[conversationId];
+    if (!cur) return;
+    void window.electronAPI?.cancelChatStream?.(cur.streamId);
+    setActiveStreams((prev) => {
+      const next = { ...prev };
+      if (next[conversationId]) {
+        next[conversationId] = { ...next[conversationId], status: "done" };
+      }
+      return next;
+    });
+  }, []);
+
+  /**
+   * Re-run the assistant pipeline for an existing conversation without
+   * appending another user message. The failed assistant placeholder
+   * (`failedAssistantId`) is deleted first so the UI cleanly replaces it.
+   *
+   * Caller responsibility: only invoke when the panel detected a failed /
+   * empty assistant tail. Returns the same shape as `startChatStream`.
+   */
+  const retryChatStream = useCallback(async (params: {
+    conversation: Conversation;
+    failedAssistantId: string;
+  }) => {
+    const conv = params.conversation;
+    return startChatStream({
+      conversation: conv,
+      userText: null,
+      providerId: conv.providerId ?? chatProvider,
+      modelId: conv.modelId ?? chatModel,
+      thinkBudget: (conv.thinkBudget as ThinkBudget) ?? chatThinkBudget,
+      thinkEnabled: !!conv.thinkEnabled,
+      modeId: (conv.modeId as string) ?? chatModeId,
+      retryFromAssistantId: params.failedAssistantId
+    });
+  }, [startChatStream, chatProvider, chatModel, chatThinkBudget, chatModeId]);
+
+  useEffect(() => { void refreshConversations(); }, [refreshConversations]);
+  useEffect(() => { void refreshProjects(); }, [refreshProjects]);
+
+  const handleNewConversation = useCallback(async (projectId: string | null = null) => {
+    const api = window.electronAPI;
+    if (!api?.createConversation) return;
+    const conv = await api.createConversation({
+      projectId,
+      name: t("sidebar.newConversation"),
+      providerId: chatProvider,
+      modelId: chatModel,
+      thinkBudget: chatThinkBudget,
+      thinkEnabled: false,
+      modeId: chatModeId
+    });
+    setActiveConversation(conv);
+    setActivePage("chat");
+    if (projectId) {
+      // Make sure the parent project is expanded so the new conv is visible.
+      setExpandedProjectIds((prev) => ({ ...prev, [projectId]: true }));
+    }
+    await refreshConversations();
+  }, [chatProvider, chatModel, chatThinkBudget, chatModeId, refreshConversations, setActivePage, setExpandedProjectIds, t]);
+
+  const handleCreateProject = useCallback(async () => {
+    const api = window.electronAPI;
+    if (!api?.createProject || !api?.pickDirectory) return;
+    // Step 1: open the native folder picker. User cancellation is a no-op.
+    const path = await api.pickDirectory();
+    if (!path) return;
+    // Derive a default project name from the folder's basename. We work in
+    // the renderer so we can't import node:path — split on both separators
+    // to handle Windows + POSIX paths the same way.
+    const basename = path.split(/[\\/]/).filter(Boolean).pop() ?? "";
+    const name = basename || t("sidebar2.untitledProject");
+    const project = await api.createProject({ name, path });
+    await refreshProjects();
+    setProjectsOpen(true);
+    setExpandedProjectIds((prev) => ({ ...prev, [project.id]: true }));
+  }, [refreshProjects, setExpandedProjectIds, setProjectsOpen, t]);
+
+  const handleDeleteProject = useCallback(async (project: Project) => {
+    const api = window.electronAPI;
+    if (!api?.deleteProject) return;
+    const ok = window.confirm(t("sidebar2.confirmDeleteProject", { name: project.name }));
+    if (!ok) return;
+    await api.deleteProject(project.id);
+    // If active conversation belonged to this project, clear it.
+    if (activeConversation && activeConversation.projectId === project.id) {
+      setActiveConversationSafe(null);
+    }
+    await Promise.all([refreshProjects(), refreshConversations()]);
+  }, [activeConversation, refreshConversations, refreshProjects, setActiveConversationSafe, t]);
+
+  const toggleProjectExpanded = useCallback((projectId: string) => {
+    setExpandedProjectIds((prev) => ({ ...prev, [projectId]: !prev[projectId] }));
+  }, [setExpandedProjectIds]);
+
+  const handleSelectConversation = useCallback((conv: Conversation) => {
+    setActiveConversation(conv);
+    setActivePage("chat");
+  }, [setActivePage]);
+
+  const handleDeleteConversation = useCallback(async (id: string) => {
+    if (!window.electronAPI?.deleteConversation) return;
+    await window.electronAPI.deleteConversation(id);
+    if (activeConversation?.id === id) setActiveConversationSafe(null);
+    await refreshConversations();
+  }, [activeConversation, refreshConversations, setActiveConversationSafe]);
+
+  // Refresh cached provider configs whenever the AI config page may have changed them.
+  const refreshProviderCache = useCallback(async () => {
+    if (!window.electronAPI?.getAllProviderConfigs) return;
+    const list = await window.electronAPI.getAllProviderConfigs();
+    const map: Record<string, ProviderConfig> = {};
+    for (const p of list) map[p.id] = p;
+    setProviderCache(map);
+    console.info(
+      "[ProviderCache] refreshed:",
+      list.map((p) => ({ id: p.id, enabled: p.enabled, apiKeyLen: p.apiKey?.length ?? 0, apiKeyPreview: p.apiKey ? `${p.apiKey.slice(0,4)}…(${p.apiKey.length})` : "<empty>", baseUrl: p.baseUrl, protocol: p.protocol }))
+    );
+  }, []);
+
+  useEffect(() => { void refreshProviderCache(); }, [refreshProviderCache, activePage]);
+
+  // Auto-pick a usable provider for chat mode whenever the current chat
+  // provider has no usable API key but another provider does.
+  useEffect(() => {
+    const currentCfg = providerCache[chatProvider];
+    const currentOk = !!(currentCfg?.enabled && currentCfg.apiKey);
+    if (currentOk) return;
+    // Find first provider with a usable key.
+    const usable = Object.values(providerCache).find((p) => p.enabled && p.apiKey);
+    if (!usable) return;
+    const def = AI_PROVIDERS_DEFAULT.find((p) => p.id === usable.id);
+    setChatProvider(usable.id);
+    if (def && def.models.length > 0) setChatModel(def.models[0].id);
+  }, [providerCache, chatProvider, setChatProvider, setChatModel]);
+
+  // Provide ChatPanel a way to resolve provider credentials at send time.
+  const resolveProvider = useCallback(async (providerId: string) => {
+    const api = window.electronAPI;
+    if (!api?.getProviderConfig) return null;
+    let cfg = providerCache[providerId];
+    if (!cfg) {
+      const fetched = await api.getProviderConfig(providerId);
+      if (fetched) {
+        cfg = fetched;
+        setProviderCache((prev) => ({ ...prev, [providerId]: fetched }));
+      }
+    }
+    if (!cfg) return null;
+    const fallbackProtocol =
+      providerId === "anthropic" ? "anthropic-messages" :
+      providerId === "google" ? "google-gemini" :
+      "openai-chat";
+    return {
+      apiKey: cfg.apiKey,
+      baseUrl: cfg.baseUrl || (AI_PROVIDERS_DEFAULT.find((p) => p.id === providerId)?.baseUrl ?? ""),
+      protocol: cfg.protocol || fallbackProtocol
+    };
+  }, [providerCache]);
+
+  // Keep the ref in sync so startChatStream (declared earlier) can call it.
+  useEffect(() => { resolveProviderRef.current = resolveProvider; }, [resolveProvider]);
+
+  const ensureConversation = useCallback(async (): Promise<Conversation> => {
+    if (activeConversation) return activeConversation;
+    const api = window.electronAPI;
+    if (!api?.createConversation) throw new Error("conversation API unavailable");
+    const conv = await api.createConversation({
+      projectId: null,
+      name: "New Conversation",
+      providerId: chatProvider,
+      modelId: chatModel,
+      thinkBudget: chatThinkBudget,
+      thinkEnabled: false,
+      modeId: chatModeId
+    });
+    setActiveConversation(conv);
+    void refreshConversations();
+    return conv;
+  }, [activeConversation, chatProvider, chatModel, chatThinkBudget, chatModeId, refreshConversations]);
+
+  // When the user opens a saved conversation, restore its mode in the UI selector.
+  useEffect(() => {
+    if (activeConversation && activeConversation.modeId) {
+      setChatModeId(activeConversation.modeId as ChatModeId);
+    }
+  }, [activeConversation, setChatModeId]);
+
+  /**
+   * Tracer: log every transition of `activeConversation`. Helps catch the
+   * elusive "mid-stream jump back to new-conversation hero" bug — the log
+   * line will show whether a stream was in flight at the moment of the
+   * transition. Cheap to leave on; safe to delete once the bug is closed.
+   */
+  const prevActiveConvIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevActiveConvIdRef.current;
+    const next = activeConversation?.id ?? null;
+    if (prev !== next) {
+      const streamingIds = Object.keys(activeStreamsRef.current).filter(
+        (id) => activeStreamsRef.current[id]?.status === "streaming"
+      );
+      console.info(
+        `[lp/conv-trace] activeConversation: ${prev ?? "null"} -> ${next ?? "null"}`,
+        streamingIds.length > 0 ? { streamingIds } : ""
+      );
+      prevActiveConvIdRef.current = next;
+    }
+  }, [activeConversation]);
 
   function handleSidebarResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -1198,6 +1452,18 @@ export function App() {
   }
 
   useEffect(() => {
+    const api = (window as unknown as { electronAPI?: Record<string, unknown> }).electronAPI;
+    console.info(
+      "[Preload Diagnostic] electronAPI =",
+      api,
+      "keys =",
+      api ? Object.keys(api).sort() : "<undefined>",
+      "hasCheckConnectivity =",
+      typeof api?.checkConnectivity
+    );
+  }, []);
+
+  useEffect(() => {
     if (!window.electronAPI?.getAppInfo) {
       return;
     }
@@ -1213,8 +1479,8 @@ export function App() {
   }, [i18n, setAppInfo, setBackground, setLanguage, setText, setTheme]);
 
   const shellStyle = useMemo(() => {
-    const selectedBackground = backgroundClassMap[background];
-    const selectedText = textClassMap[text];
+    const selectedBackground = backgroundClassMap[background] ?? backgroundClassMap.dark;
+    const selectedText = textClassMap[text] ?? textClassMap.ivory;
     return {
       ["--lp-bg" as string]: selectedBackground.base,
       ["--lp-bg-2" as string]: selectedBackground.top,
@@ -1229,26 +1495,40 @@ export function App() {
     };
   }, [background, text]);
 
-  async function saveAppearance(next: AppearanceSettings) {
+  function saveAppearance(next: AppearanceSettings) {
+    // Apply all four UI states in one synchronous block so React batches them
+    // into a single render. Then kick off i18n + DB persistence — i18n
+    // resources are inlined and `changeLanguage` resolves synchronously for
+    // already-loaded languages, so the visual result is one atomic update
+    // instead of the "double flash" we used to see when each `await`
+    // boundary triggered its own re-render.
     setTheme(next.theme);
     setBackground(next.background);
     setText(next.text);
     setLanguage(next.language);
-    await i18n.changeLanguage(next.language);
+    if (i18n.language !== next.language) {
+      void i18n.changeLanguage(next.language);
+    }
+    // Persist to DB in the background — store is already the source of truth
+    // for the UI; we don't need to re-apply the round-tripped value unless
+    // it actually differs (rare, but kept for correctness).
     if (window.electronAPI?.setAppearanceSettings) {
-      const saved = await window.electronAPI.setAppearanceSettings(next);
-      if (saved) {
-        setTheme(saved.theme);
-        setBackground(saved.background);
-        setText(saved.text);
-        setLanguage(saved.language);
-      }
+      void window.electronAPI.setAppearanceSettings(next).then((saved) => {
+        if (!saved) return;
+        if (saved.theme !== next.theme) setTheme(saved.theme);
+        if (saved.background !== next.background) setBackground(saved.background);
+        if (saved.text !== next.text) setText(saved.text);
+        if (saved.language !== next.language) {
+          setLanguage(saved.language);
+          void i18n.changeLanguage(saved.language);
+        }
+      });
     }
   }
 
-  async function toggleLanguage() {
+  function toggleLanguage() {
     const next = language === "zh-CN" ? "en" : "zh-CN";
-    await saveAppearance({
+    saveAppearance({
       theme,
       background,
       text,
@@ -1258,19 +1538,19 @@ export function App() {
 
   return (
     <div
-      className="min-h-screen bg-[var(--lp-bg)] text-[var(--lp-text)] [font-family:'PingFang_SC','HarmonyOS_Sans_SC','Helvetica_Neue',Inter,system-ui,sans-serif] [font-feature-settings:'ss01','cv11'] antialiased"
+      className="h-screen overflow-hidden bg-[var(--lp-bg)] text-[var(--lp-text)] [font-family:'PingFang_SC','HarmonyOS_Sans_SC','Helvetica_Neue',Inter,system-ui,sans-serif] [font-feature-settings:'ss01','cv11'] antialiased"
       style={shellStyle}
     >
-      <div className="flex min-h-screen overflow-hidden">
+      <div className="flex h-screen overflow-hidden">
         {/* Sidebar */}
-        <aside className="flex flex-shrink-0 flex-col bg-[var(--lp-side-bg)] px-3 pb-3 pt-0 backdrop-blur-xl" style={{ width: sidebarWidth }}>
+        <aside className="flex flex-shrink-0 flex-col bg-[var(--lp-side-bg)] px-3 pb-3 pt-0 backdrop-blur-xl" style={{ width: sidebarWidth, height: '100vh' }}>
           {/* macOS traffic-light spacer + header (draggable) */}
           <div
             className="flex h-[52px] items-center justify-center px-2"
             style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
           >
             <div className="text-[15px] font-semibold tracking-tight text-[var(--lp-text)]">
-              Little Peanut
+              🥜 Little Peanut
             </div>
           </div>
 
@@ -1281,7 +1561,7 @@ export function App() {
               className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[14px] transition hover:bg-white/[0.04] ${activePage === "chat" ? "bg-white/[0.06] text-[var(--lp-text)]" : "text-[var(--lp-text)]/82"}`}
               onClick={() => setActivePage("chat")}
             >
-              <span className="inline-flex h-5 w-5 items-center justify-center text-[15px] text-[var(--lp-text)]/72">✎</span>
+              <span className="inline-flex h-5 w-5 items-center justify-center text-[15px] text-[var(--lp-text)]/72">💬</span>
               <span>{t("sidebar.chatMode")}</span>
             </button>
             <button
@@ -1289,61 +1569,241 @@ export function App() {
               className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[14px] transition hover:bg-white/[0.04] ${activePage === "modelConfig" ? "bg-white/[0.06] text-[var(--lp-text)]" : "text-[var(--lp-text)]/82"}`}
               onClick={() => setActivePage("modelConfig")}
             >
-              <span className="inline-flex h-5 w-5 items-center justify-center text-[15px] text-[var(--lp-text)]/72">✦</span>
+              <span className="inline-flex h-5 w-5 items-center justify-center text-[15px] text-[var(--lp-text)]/72">⚙</span>
               <span>{t("sidebar.modelConfig")}</span>
             </button>
           </nav>
 
+          {/* Scrollable middle area */}
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {/* Projects */}
           <div className="mt-5 flex items-center justify-between px-3">
-            <div className="flex items-center gap-2 text-[12px] text-[var(--lp-soft-text)]">
+            <button
+              type="button"
+              className="flex flex-1 items-center gap-1.5 rounded-md py-1 text-[12px] text-[var(--lp-soft-text)] hover:text-[var(--lp-text)]/85"
+              onClick={() => setProjectsOpen((v) => !v)}
+              aria-expanded={projectsOpen}
+              title={projectsOpen ? t("sidebar2.collapse") : t("sidebar2.expand")}
+            >
+              <svg
+                width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true"
+                className="shrink-0 transition-transform"
+                style={{ transform: projectsOpen ? "rotate(90deg)" : "rotate(0deg)" }}
+              >
+                <path d="M4 2.5L8 6L4 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
               <span>{t("sidebar.projects")}</span>
-              <span className="rounded-full bg-white/[0.06] px-1.5 text-[11px] leading-[18px] text-[var(--lp-soft-text)]">1</span>
-            </div>
+              <span className="rounded-full bg-white/[0.06] px-1.5 text-[11px] leading-[18px] text-[var(--lp-soft-text)]">
+                {projects.length}
+              </span>
+            </button>
             <div className="flex items-center gap-1 text-[var(--lp-soft-text)]">
-              <button className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-white/[0.05]" title="导入">⤴</button>
-              <button className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-white/[0.05]" title="新建项目">＋</button>
+              <button
+                className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-white/[0.05] hover:text-[var(--lp-text)]"
+                title={t("sidebar2.newProjectBtn")}
+                onClick={(e) => { e.stopPropagation(); void handleCreateProject(); }}
+                type="button"
+              >＋</button>
             </div>
           </div>
 
-          <div className="mt-2 px-1">
-            <button
-              type="button"
-              className="flex w-full items-center justify-between rounded-xl px-2 py-2 text-left hover:bg-white/[0.04]"
-            >
-              <span className="flex items-center gap-3 text-[14px] text-[var(--lp-text)]/88">
-                <span className="text-[15px] text-[var(--lp-text)]/72">▤</span>
-                <span className="font-medium">{t("sidebar.newProject")}</span>
-              </span>
-              <span className="flex items-center gap-1 text-[12px] text-[var(--lp-soft-text)]">
-                {t("sidebar.localOne")}
-                <span>⌄</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              className="mt-0.5 flex w-full items-center justify-between rounded-xl px-9 py-2 text-left text-[13px] text-[var(--lp-text)]/82 hover:bg-white/[0.04]"
-            >
-              <span>{t("sidebar.newConversation")}</span>
-              <span className="text-[12px] text-[var(--lp-soft-text)]">{t("sidebar.agoOneHour")}</span>
-            </button>
-          </div>
+          {projectsOpen ? (
+            projects.length === 0 ? (
+              <div className="mt-2 px-3 text-[12px] text-[var(--lp-soft-text)]">
+                {t("sidebar2.emptyProjects")}
+              </div>
+            ) : (
+              <div className="mt-2 flex flex-col gap-0.5 px-1">
+                {projects.map((p) => {
+                  const expanded = !!expandedProjectIds[p.id];
+                  const projectConvs = conversations.filter((c) => c.projectId === p.id);
+                  return (
+                    <div key={p.id} className="group/project">
+                      <div className="flex items-center justify-between rounded-xl px-2 py-2 hover:bg-white/[0.04]">
+                        <button
+                          type="button"
+                          className="flex flex-1 min-w-0 items-center gap-2 text-left"
+                          onClick={() => toggleProjectExpanded(p.id)}
+                          title={p.path ? `${p.name}\n${p.path}` : p.name}
+                        >
+                          <svg
+                            width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true"
+                            className="shrink-0 text-[var(--lp-soft-text)] transition-transform"
+                            style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
+                          >
+                            <path d="M4 2.5L8 6L4 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                          <span className="text-[15px] text-[var(--lp-text)]/72">📁</span>
+                          <span className="flex flex-1 min-w-0 flex-col">
+                            <span className="truncate text-[14px] font-medium text-[var(--lp-text)]/88">{p.name}</span>
+                            {p.path ? (
+                              <span className="truncate text-[10.5px] leading-tight text-[var(--lp-soft-text)]">{p.path}</span>
+                            ) : null}
+                          </span>
+                        </button>
+                        <div className="ml-1 flex shrink-0 items-center gap-0.5">
+                          <span className="text-[12px] text-[var(--lp-soft-text)] opacity-100 group-hover/project:opacity-0">
+                            {projectConvs.length}
+                          </span>
+                          <button
+                            type="button"
+                            className="hidden h-5 w-5 items-center justify-center rounded text-[14px] leading-none text-[var(--lp-soft-text)] hover:bg-white/[0.06] hover:text-[var(--lp-text)] group-hover/project:flex"
+                            onClick={(e) => { e.stopPropagation(); void handleNewConversation(p.id); }}
+                            title={t("sidebar2.newConvUnderProject")}
+                          >＋</button>
+                          <button
+                            type="button"
+                            className="hidden h-5 w-5 items-center justify-center rounded text-[14px] leading-none text-[var(--lp-soft-text)] hover:bg-red-500/10 hover:text-red-400 group-hover/project:flex"
+                            onClick={(e) => { e.stopPropagation(); void handleDeleteProject(p); }}
+                            title={t("sidebar2.deleteProject")}
+                          >×</button>
+                        </div>
+                      </div>
+                      {expanded ? (
+                        projectConvs.length === 0 ? (
+                          <div className="mb-1 ml-9 mt-0.5 text-[12px] text-[var(--lp-soft-text)]">
+                            {t("sidebar2.emptyProjectConvs")}
+                          </div>
+                        ) : (
+                          <div className="mb-1 ml-7 mt-0.5 flex flex-col gap-0.5">
+                            {projectConvs.map((c) => {
+                              const active = activeConversation?.id === c.id;
+                              const mode = CHAT_MODE_MAP[(c.modeId as ChatModeId) ?? "chat"] ?? CHAT_MODE_MAP.chat;
+                              return (
+                                <button
+                                  key={c.id}
+                                  type="button"
+                                  className={`flex w-full items-center gap-2 truncate rounded-lg px-2 py-1.5 text-left text-[13px] transition hover:bg-white/[0.04] ${
+                                    active ? "bg-white/[0.06] text-[var(--lp-text)]" : "text-[var(--lp-text)]/82"
+                                  }`}
+                                  onClick={() => handleSelectConversation(c)}
+                                  title={c.name}
+                                >
+                                  <span className="text-[12px] leading-none opacity-90">{mode.icon}</span>
+                                  <span className="truncate">{c.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </div>
+            )
+          ) : null}
 
           {/* Divider */}
           <div className="mx-3 my-4 border-t border-white/[0.06]" />
 
           {/* Conversations */}
           <div className="flex items-center justify-between px-3">
-            <div className="flex items-center gap-2 text-[12px] text-[var(--lp-soft-text)]">
+            <button
+              type="button"
+              className="flex flex-1 items-center gap-1.5 rounded-md py-1 text-[12px] text-[var(--lp-soft-text)] hover:text-[var(--lp-text)]/85"
+              onClick={() => setConversationsOpen((v) => !v)}
+              aria-expanded={conversationsOpen}
+              title={conversationsOpen ? t("sidebar2.collapse") : t("sidebar2.expand")}
+            >
+              <svg
+                width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true"
+                className="shrink-0 transition-transform"
+                style={{ transform: conversationsOpen ? "rotate(90deg)" : "rotate(0deg)" }}
+              >
+                <path d="M4 2.5L8 6L4 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
               <span>{t("sidebar.conversations")}</span>
-              <span className="rounded-full bg-white/[0.06] px-1.5 text-[11px] leading-[18px]">0</span>
-            </div>
+              <span className="rounded-full bg-white/[0.06] px-1.5 text-[11px] leading-[18px]">{conversations.length}</span>
+            </button>
             <div className="flex items-center gap-1 text-[var(--lp-soft-text)]">
-              <button className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-white/[0.05]">···</button>
-              <button className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-white/[0.05]">＋</button>
+              <button
+                className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-white/[0.05]"
+                onClick={(e) => { e.stopPropagation(); if (!conversationsOpen) setConversationsOpen(true); void handleNewConversation(); }}
+                title={t("sidebar.newConversation")}
+                type="button"
+              >＋</button>
             </div>
           </div>
-          <div className="mt-2 px-3 text-[12px] text-[var(--lp-soft-text)]">{t("sidebar.emptyConversations")}</div>
+          {!conversationsOpen ? null : conversations.length === 0 ? (
+            <div className="mt-2 px-3 text-[12px] text-[var(--lp-soft-text)]">{t("sidebar.emptyConversations")}</div>
+          ) : (
+            <div className="mt-1 flex flex-col gap-0.5 px-1">
+              {conversations.map((c) => {
+                const active = activeConversation?.id === c.id;
+                const mode = CHAT_MODE_MAP[(c.modeId as ChatModeId) ?? "chat"] ?? CHAT_MODE_MAP.chat;
+                const stream = activeStreams[c.id];
+                const isLiveStreaming = stream?.status === "streaming";
+                // While streaming, the persisted preview lags. Synthesize a
+                // live preview from the accumulating text so the user can see
+                // their background conversation progress in the sidebar.
+                const preview = conversationPreviews[c.id];
+                let previewLabel: string;
+                if (isLiveStreaming && stream.text) {
+                  previewLabel = `${t("modelConfig.assistant")}: ${stream.text.replace(/\s+/g, " ").trim()}`;
+                } else if (preview) {
+                  previewLabel = `${preview.role === "user" ? t("modelConfig.you") : t("modelConfig.assistant")}: ${preview.content.replace(/\s+/g, " ").trim()}`;
+                } else {
+                  previewLabel = "";
+                }
+                return (
+                  <div
+                    key={c.id}
+                    className={`group rounded-lg px-3 py-2 transition hover:bg-white/[0.04] ${active ? "bg-white/[0.06] text-[var(--lp-text)]" : "text-[var(--lp-text)]/82"}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <button
+                        type="button"
+                        className="flex flex-1 min-w-0 items-start gap-1.5 text-left"
+                        onClick={() => handleSelectConversation(c)}
+                        title={`${c.name} · ${t(mode.nameKey)}${isLiveStreaming ? ` · ${t("sidebar2.inProgressBadge")}` : ""}`}
+                      >
+                        <span className="relative mt-[2px] inline-flex h-3 w-3 shrink-0 items-center justify-center">
+                          <span className="text-[12px] leading-none opacity-90">{mode.icon}</span>
+                          {isLiveStreaming ? (
+                            <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)] lp-streaming-dot" />
+                          ) : null}
+                        </span>
+                        <span className="flex flex-1 min-w-0 flex-col">
+                          <span className="flex items-center gap-1.5">
+                            <span className="truncate text-[13px] leading-tight">{c.name}</span>
+                            {isLiveStreaming ? (
+                              <span className="shrink-0 text-[10px] font-medium text-emerald-300">●</span>
+                            ) : null}
+                          </span>
+                          {previewLabel ? (
+                            <span className="mt-1 truncate text-[11px] leading-tight text-[var(--lp-soft-text)]" title={previewLabel}>
+                              {previewLabel}
+                            </span>
+                          ) : null}
+                        </span>
+                      </button>
+                      <div className="ml-1 flex shrink-0 items-center gap-0.5">
+                        {isLiveStreaming ? (
+                          <button
+                            type="button"
+                            className="flex h-5 w-5 items-center justify-center rounded text-[11px] text-red-300 hover:bg-red-500/15 hover:text-red-200"
+                            onClick={(e) => { e.stopPropagation(); cancelChatStream(c.id); }}
+                            title={t("sidebar2.stopGenTitle")}
+                          >
+                            <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="hidden h-5 w-5 items-center justify-center rounded text-[14px] text-[var(--lp-soft-text)] hover:bg-red-500/10 hover:text-red-400 group-hover:flex"
+                          onClick={(e) => { e.stopPropagation(); void handleDeleteConversation(c.id); }}
+                          title={t("sidebar2.deleteTitle")}
+                        >×</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          </div>
+          {/* End scrollable middle area */}
 
           {/* Footer */}
           <div className="mt-auto flex items-center gap-2 px-2 pt-4">
@@ -1355,7 +1815,7 @@ export function App() {
                 aria-label={t("sidebar.themeSettings")}
                 type="button"
               >
-                {theme === "dark" ? "☾" : "☀"}
+                {theme === "dark" ? <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg> : <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>}
               </button>
               <span className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/90 px-2.5 py-1.5 text-[11px] font-medium text-white opacity-0 shadow-[0_6px_20px_rgba(0,0,0,0.4)] transition delay-100 duration-150 group-hover:opacity-100">
                 {t("sidebar.themeSettings")}
@@ -1369,7 +1829,7 @@ export function App() {
                 aria-label={t("sidebar.settings")}
                 type="button"
               >
-                ⚙
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
               </button>
               <span className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-md bg-black/90 px-2.5 py-1.5 text-[11px] font-medium text-white opacity-0 shadow-[0_6px_20px_rgba(0,0,0,0.4)] transition delay-100 duration-150 group-hover:opacity-100">
                 {t("sidebar.settings")}
@@ -1378,7 +1838,7 @@ export function App() {
             <div className="group relative">
               <button
                 className="flex h-9 min-w-[44px] items-center justify-center rounded-full border border-[var(--lp-border)] bg-[var(--lp-panel)] px-3 text-[12px] font-medium text-[var(--lp-text)]/82 hover:bg-[var(--lp-panel-2)]"
-                onClick={() => void toggleLanguage()}
+                onClick={() => toggleLanguage()}
                 title={language.startsWith("zh") ? t("sidebar.switchToEnglish") : t("sidebar.switchToChinese")}
                 aria-label={language.startsWith("zh") ? t("sidebar.switchToEnglish") : t("sidebar.switchToChinese")}
                 type="button"
@@ -1414,74 +1874,67 @@ export function App() {
               className="flex items-center gap-2 text-[var(--lp-soft-text)]"
               style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
             >
-              <button className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.05]" title="安全">🛡</button>
-              <button className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.05]" title={t("sidebar.help")}>?</button>
+              <button className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.05]" title={t("sidebar2.securityTitle")}>🛡</button>
+              <button className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.05]" title={t("sidebar.help")}>❓</button>
             </div>
           </header>
 
           {activePage === "chat" ? (
-            <div className="flex flex-1 flex-col items-center justify-center px-6 pb-10">
-              <div className="text-center">
-                <div className="text-[44px] font-semibold leading-tight tracking-tight text-[var(--lp-text)]">
-                  {t("home.heroTitle")}
-                </div>
-                <div className="mt-3 text-[15px] font-normal text-[var(--lp-muted)]">
-                  {t("home.heroSubtitle")}
-                </div>
-              </div>
-
-              <div className="mt-10 w-full max-w-[860px]">
-                <div
-                  className="rounded-[20px] border border-[var(--lp-border)] bg-[var(--lp-panel-2)] px-5 py-4 shadow-[0_8px_28px_rgba(0,0,0,0.18)] backdrop-blur-xl transition-colors"
-                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                  onDrop={(e) => { e.preventDefault(); e.stopPropagation(); /* TODO: handle dropped files */ }}
-                >
-                  <textarea
-                    className="h-[88px] w-full resize-none bg-transparent text-[15px] leading-relaxed text-[var(--lp-text)] outline-none placeholder:text-[var(--lp-soft-text)]"
-                    placeholder={t("home.inputPlaceholder")}
+            <ChatPanel
+              conversation={activeConversation}
+              onEnsureConversation={ensureConversation}
+              onConversationsChanged={() => { void refreshConversations(); }}
+              defaultProviderId={chatProvider}
+              defaultModelId={chatModel}
+              defaultThinkBudget={chatThinkBudget}
+              activeModeId={chatModeId}
+              liveStream={activeConversation ? activeStreams[activeConversation.id] : undefined}
+              onStartStream={startChatStream}
+              onCancelStream={cancelChatStream}
+              onRetryStream={retryChatStream}
+              labels={{
+                heroTitle: t("home.heroTitle"),
+                heroSubtitle: t("home.heroSubtitle"),
+                inputPlaceholder: t("home.inputPlaceholder"),
+                start: t("home.start"),
+                stop: t("modelConfig.stop"),
+                sending: t("home.start"),
+                apiKeyMissing: t("modelConfig.apiKeyMissing"),
+                deliveryError: t("modelConfig.deliveryError"),
+                emptyState: t("modelConfig.emptyState"),
+                you: t("modelConfig.you"),
+                assistant: t("modelConfig.assistant"),
+                thinking: t("modelConfig.thinking"),
+                retry: t("modelConfig.retry"),
+                retryFailed: t("modelConfig.retryFailed")
+              }}
+              toolbar={
+                <>
+                  <ModeSelector
+                    selectedModeId={chatModeId}
+                    onChange={(id) => {
+                      setChatModeId(id);
+                      // Persist on active conversation, if any (so reload restores it).
+                      const conv = activeConversation;
+                      if (conv && window.electronAPI?.updateConversation) {
+                        void window.electronAPI.updateConversation(conv.id, { modeId: id }).then((updated) => {
+                          if (updated) setActiveConversation(updated);
+                        });
+                      }
+                    }}
                   />
-
-                  <div className="mt-3 flex items-center justify-between">
-                    <div className="relative flex items-center gap-2 text-[13px] text-[var(--lp-text)]/78">
-                      <button
-                        className="flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] bg-white/[0.03] px-3 py-1.5 hover:bg-white/[0.06]"
-                        onClick={() => setModeMenuOpen((value) => !value)}
-                        type="button"
-                      >
-                        <span className="text-[13px]">✈</span>
-                        <span>{t("home.modeChat")}</span>
-                        <span className="text-[var(--lp-soft-text)]">⌄</span>
-                      </button>
-                      <ModeMenu open={modeMenuOpen} onClose={() => setModeMenuOpen(false)} />
-                      <ModelSelector
-                        selectedProvider={chatProvider}
-                        selectedModel={chatModel}
-                        thinkBudget={chatThinkBudget}
-                        onChangeProvider={setChatProvider}
-                        onChangeModel={setChatModel}
-                        onChangeBudget={setChatThinkBudget}
-                      />
-                      <button className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--lp-soft-text)] hover:bg-white/[0.04]" type="button">＋</button>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-[12px] text-[var(--lp-soft-text)]">0%</span>
-                      <button className="flex h-7 w-7 items-center justify-center rounded-full text-[var(--lp-soft-text)] hover:bg-white/[0.04]" type="button">✎</button>
-                      <button className="flex items-center gap-1.5 rounded-full bg-white px-4 py-2 text-[13px] font-medium text-[#151515] shadow-[0_4px_14px_rgba(255,255,255,0.08)]" type="button">
-                        <span>{t("home.start")}</span>
-                        <span>➤</span>
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-5 flex flex-wrap justify-center gap-3">
-                  <SuggestionChip label={t("home.suggestions.async")} />
-                  <SuggestionChip label={t("home.suggestions.rest")} />
-                  <SuggestionChip label={t("home.suggestions.regex")} />
-                </div>
-              </div>
-            </div>
+                  <ModelSelector
+                    selectedProvider={chatProvider}
+                    selectedModel={chatModel}
+                    thinkBudget={chatThinkBudget}
+                    onChangeProvider={setChatProvider}
+                    onChangeModel={setChatModel}
+                    onChangeBudget={setChatThinkBudget}
+                    providerConfigs={providerCache}
+                  />
+                </>
+              }
+            />
           ) : (
             <ModelConfigPage />
           )}
@@ -1492,32 +1945,15 @@ export function App() {
         <ThemeModal
           current={{ theme, background, text, language }}
           onClose={() => setThemeModalOpen(false)}
-          onSave={async (settings) => {
-            await saveAppearance(settings);
+          onSave={(settings) => {
+            saveAppearance(settings);
             setThemeModalOpen(false);
           }}
         />
       ) : null}
 
       {settingsOpen ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-6" onClick={() => setSettingsOpen(false)}>
-          <div
-            className="w-full max-w-md rounded-[24px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] p-6 text-[var(--lp-text)] shadow-[0_20px_80px_rgba(0,0,0,0.35)] backdrop-blur-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-3 text-lg font-semibold">{t("sidebar.settings")}</div>
-            <div className="text-sm text-[var(--lp-muted)]">设置面板占位（待实现）</div>
-            <div className="mt-5 flex justify-end">
-              <button
-                className="rounded-full bg-white px-5 py-2 text-sm font-medium text-[#151515]"
-                onClick={() => setSettingsOpen(false)}
-                type="button"
-              >
-                {t("appearance.close")}
-              </button>
-            </div>
-          </div>
-        </div>
+        <SettingsPage onClose={() => setSettingsOpen(false)} appVersion={appInfo?.version} />
       ) : null}
     </div>
   );

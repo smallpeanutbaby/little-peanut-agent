@@ -17,7 +17,7 @@ interface UiState {
 export const useUiStore = create<UiState>((set) => ({
   appInfo: null,
   theme: "dark",
-  background: "peanut-dark",
+  background: "dark",
   text: "ivory",
   language: "zh-CN",
   setAppInfo: (appInfo) => set({ appInfo }),
