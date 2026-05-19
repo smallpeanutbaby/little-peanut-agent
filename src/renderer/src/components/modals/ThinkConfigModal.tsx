@@ -1,38 +1,45 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ModelConfig, ThinkBudget } from "@shared/types";
-import { THINK_BUDGET_LABELS } from "../../constants/think-presets";
+import type { ModelCapability, ModelConfig, ThinkBudget, ThinkProtocol } from "@shared/types";
+import { PROTOCOL_LEVELS, THINK_BUDGET_LABELS } from "../../constants/think-presets";
 
 /**
  * Configure how a given model speaks reasoning/thinking to its provider:
  *  - whether reasoning is enabled by default
- *  - what default level (when the model exposes granular levels)
+ *  - what default level (when the protocol exposes granular levels)
  *  - extra body JSON merged into the chat request on/off
  *  - forced temperature (Anthropic needs t=1, GLM dislikes >0.8, etc.)
+ *
+ * The available levels are derived purely from {@link ThinkProtocol} via
+ * `PROTOCOL_LEVELS` — we no longer accept a hand-rolled `thinkLevels` array.
  */
 export function ThinkConfigModal({
   modelId,
   providerId,
-  thinkLevels,
+  thinkProtocol,
+  capabilities,
   config,
   onClose,
   onSave
 }: {
   modelId: string;
   providerId: string;
-  /** Levels the model supports. Empty array / undefined ⇒ binary on/off only. */
-  thinkLevels?: ThinkBudget[];
+  /** Reasoning protocol family. `null` ⇒ model has no reasoning capability. */
+  thinkProtocol: ThinkProtocol | null;
+  /** Capability set to preserve when persisting the config. */
+  capabilities: ModelCapability[];
   config: ModelConfig | undefined;
   onClose: () => void;
   onSave: (c: ModelConfig) => void;
 }) {
   const { t } = useTranslation();
-  const hasLevels = !!thinkLevels && thinkLevels.length > 0;
-  const defaultLevel: ThinkBudget = hasLevels && thinkLevels!.includes("medium") ? "medium" : thinkLevels?.[0] ?? "medium";
+  const levels: ThinkBudget[] = thinkProtocol ? PROTOCOL_LEVELS[thinkProtocol] : [];
+  const hasLevels = levels.length > 0;
+  const defaultLevel: ThinkBudget = hasLevels && levels.includes("medium") ? "medium" : (levels[0] ?? "medium");
   const [thinkEnabled, setThinkEnabled] = useState(config?.thinkEnabled ?? false);
   const [budget, setBudget] = useState<ThinkBudget>(() => {
     const saved = config?.thinkBudget;
-    if (saved && (!hasLevels || thinkLevels!.includes(saved))) return saved;
+    if (saved && (!hasLevels || levels.includes(saved))) return saved;
     return defaultLevel;
   });
   const [bodyOn, setBodyOn] = useState(config?.thinkBodyOn ?? "{\n}");
@@ -52,7 +59,10 @@ export function ThinkConfigModal({
               {t("thinkConfig.subtitle", { modelId })}
               {hasLevels ? (
                 <span className="ml-1 text-[var(--lp-soft-text)]">
-                  {t("thinkConfig.levelsBadge", { count: thinkLevels!.length })}
+                  {t("thinkConfig.protocolBadge", {
+                    protocol: t(`thinkProtocol.${thinkProtocol}`, thinkProtocol!),
+                    count: levels.length
+                  })}
                 </span>
               ) : (
                 <span className="ml-1 text-[var(--lp-soft-text)]">{t("thinkConfig.binaryBadge")}</span>
@@ -109,7 +119,7 @@ export function ThinkConfigModal({
                 <div className="text-[14px] font-medium text-[var(--lp-text)]">{t("thinkConfig.defaultLevel")}</div>
                 <div className="mt-1 text-[11px] text-[var(--lp-soft-text)]">{t("thinkConfig.defaultLevelHint")}</div>
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {thinkLevels!.map((b) => (
+                  {levels.map((b) => (
                     <button
                       key={b}
                       type="button"
@@ -160,6 +170,8 @@ export function ThinkConfigModal({
                 providerId,
                 modelId,
                 enabled: config?.enabled ?? true,
+                capabilities,
+                thinkProtocol,
                 thinkEnabled,
                 thinkBudget: budget,
                 thinkBodyOn: bodyOn,

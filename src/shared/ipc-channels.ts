@@ -79,10 +79,43 @@ export const IPC = {
   },
   dialog: {
     pickDirectory: "dialog:pick-directory"
+  },
+  shell: {
+    openPath: "shell:open-path"
+  },
+  git: {
+    status: "git:status"
+  },
+  agent: {
+    startRun: "agent:start-run",
+    cancelRun: "agent:cancel-run",
+    answerPermission: "agent:answer-permission",
+    listParts: "agent:list-parts",
+    listToolRuns: "agent:list-tool-runs",
+    listTodos: "agent:list-todos",
+    listTasks: "agent:list-tasks",
+    cancelTask: "agent:cancel-task",
+    costSummary: "agent:cost-summary",
+    listInterrupted: "agent:list-interrupted",
+    discardInterrupted: "agent:discard-interrupted",
+    /** Per-run push channel; the real name is `agent:run:${runId}`. */
+    runPrefix: "agent:run:",
+    /** Per-run permission request channel: `agent:permission:${runId}`. */
+    permissionPrefix: "agent:permission:"
   }
 } as const;
 
 /** Compose a per-stream push channel from a stream id. */
 export function chatStreamChannel(streamId: string): string {
   return `${IPC.chat.streamPrefix}${streamId}`;
+}
+
+/** Compose a per-run agent event channel. */
+export function agentRunChannel(runId: string): string {
+  return `${IPC.agent.runPrefix}${runId}`;
+}
+
+/** Compose a per-run permission-request channel. */
+export function agentPermissionChannel(runId: string): string {
+  return `${IPC.agent.permissionPrefix}${runId}`;
 }

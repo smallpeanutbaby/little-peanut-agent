@@ -10,15 +10,18 @@ import type {
   Conversation,
   McpServerConfig,
   McpTransport,
+  ModelCapability,
   ModelConfig,
   Project,
   ProviderConfig,
   TextColor,
   ThemeMode,
-  ThinkBudget
-} from "@shared/types";
-import { decryptSecret, encryptSecret, isEncrypted } from "../security/secret-store";
-import { CURRENT_SCHEMA_VERSION, runMigrations } from "./migrations";
+  ThinkBudget,
+  ThinkProtocol
+} from "@shared/types.js";
+import { decryptSecret, encryptSecret, isEncrypted } from "../security/secret-store.js";
+import { CURRENT_SCHEMA_VERSION, runMigrations } from "./migrations.js";
+import { AgentStore } from "./agent-store.js";
 
 function nowMs(): number {
   return Date.now();
@@ -29,12 +32,33 @@ function genId(prefix: string): string {
 
 export class AppDatabase {
   private readonly db: Database.Database;
+  /** Sub-store owning the agent-runtime tables (introduced in v5). */
+  readonly agent: AgentStore;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.bootstrap();
+    this.agent = new AgentStore(this.db);
+    // House-keep crashed sessions: anything marked live in tool_run /
+    // agent_task at startup is by definition stale. The user can pick a
+    // conversation and click "继续" if they want to resume.
+    try {
+      this.agent.cancelAllOrphanToolRuns();
+      this.agent.killOrphanTasks();
+      this.agent.clearSessionPermissionRules();
+    } catch (e) {
+      console.warn("[db] agent orphan cleanup failed", e);
+    }
+  }
+
+  /** Raw handle — used by the agent runtime for transactional writes
+   *  that span the chat tables (`message`) and the agent tables
+   *  (`message_part`, `tool_run`). Avoid using this from feature code;
+   *  prefer the helper methods on the store. */
+  rawHandle(): Database.Database {
+    return this.db;
   }
 
   private bootstrap() {
@@ -88,6 +112,26 @@ export class AppDatabase {
       return Array.isArray(parsed) && parsed.length > 0 ? parsed : undefined;
     } catch {
       return undefined;
+    }
+  }
+
+  /** Encode a ModelCapability[] for storage. Empty array → "[]" so the
+   *  column NOT NULL constraint is satisfied without ambiguous empty strings. */
+  private encodeCapabilities(caps: ModelCapability[] | null | undefined): string {
+    if (!caps || caps.length === 0) return "[]";
+    return JSON.stringify(caps);
+  }
+
+  /** Decode the JSON capabilities column; defaults to ["text"] on any
+   *  parse failure / legacy empty value so existing chat flows don't break. */
+  private decodeCapabilities(raw: string | null | undefined): ModelCapability[] {
+    if (!raw) return ["text"];
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as ModelCapability[];
+      return ["text"];
+    } catch {
+      return ["text"];
     }
   }
 
@@ -153,11 +197,15 @@ export class AppDatabase {
         think_body_on: string;
         think_body_off: string;
         force_temperature: string;
+        capabilities: string;
+        think_protocol: string;
       }>;
     return rows.map((r) => ({
       providerId: r.provider_id,
       modelId: r.model_id,
       enabled: r.enabled === 1,
+      capabilities: this.decodeCapabilities(r.capabilities),
+      thinkProtocol: (r.think_protocol || null) as ThinkProtocol | null,
       thinkEnabled: r.think_enabled === 1,
       thinkBudget: r.think_budget as ModelConfig["thinkBudget"],
       thinkBodyOn: r.think_body_on,
@@ -168,15 +216,17 @@ export class AppDatabase {
 
   saveModelConfig(config: ModelConfig) {
     this.db
-      .prepare(`INSERT INTO model_config (provider_id, model_id, enabled, think_enabled, think_budget, think_body_on, think_body_off, force_temperature)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      .prepare(`INSERT INTO model_config (provider_id, model_id, enabled, think_enabled, think_budget, think_body_on, think_body_off, force_temperature, capabilities, think_protocol)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(provider_id, model_id) DO UPDATE SET
           enabled = excluded.enabled,
           think_enabled = excluded.think_enabled,
           think_budget = excluded.think_budget,
           think_body_on = excluded.think_body_on,
           think_body_off = excluded.think_body_off,
-          force_temperature = excluded.force_temperature`)
+          force_temperature = excluded.force_temperature,
+          capabilities = excluded.capabilities,
+          think_protocol = excluded.think_protocol`)
       .run(
         config.providerId,
         config.modelId,
@@ -185,7 +235,9 @@ export class AppDatabase {
         config.thinkBudget,
         config.thinkBodyOn,
         config.thinkBodyOff,
-        config.forceTemperature
+        config.forceTemperature,
+        this.encodeCapabilities(config.capabilities),
+        config.thinkProtocol ?? ""
       );
   }
 
@@ -195,13 +247,37 @@ export class AppDatabase {
       .run(enabled ? 1 : 0, providerId);
   }
 
-  bulkInitModels(providerId: string, modelIds: string[]) {
+  /**
+   * Seed a batch of model rows for a provider on first open. Each entry may
+   * carry the catalog-derived capabilities + thinkProtocol; we use
+   * `INSERT OR IGNORE` so re-opening the page never clobbers user-edited
+   * rows. To repair old rows that still have empty capabilities (i.e. rows
+   * that pre-date v4), we run a separate UPDATE for those.
+   */
+  bulkInitModels(providerId: string, models: Array<{ id: string; capabilities?: ModelCapability[]; thinkProtocol?: ThinkProtocol | null }>) {
     const insert = this.db.prepare(
-      "INSERT OR IGNORE INTO model_config (provider_id, model_id, enabled, think_enabled, think_budget, think_body_on, think_body_off, force_temperature) VALUES (?, ?, 1, 0, 'medium', '{}', '', '')"
+      `INSERT OR IGNORE INTO model_config
+        (provider_id, model_id, enabled, think_enabled, think_budget, think_body_on, think_body_off, force_temperature, capabilities, think_protocol)
+        VALUES (?, ?, 1, 0, 'medium', '{}', '', '', ?, ?)`
+    );
+    // Heal rows that already exist but whose capabilities column was created
+    // empty by v4 (default '[]'). Don't touch rows the user customised — we
+    // only fill in when stored capabilities is the empty literal.
+    const heal = this.db.prepare(
+      `UPDATE model_config
+         SET capabilities = ?, think_protocol = COALESCE(NULLIF(think_protocol, ''), ?)
+       WHERE provider_id = ? AND model_id = ? AND (capabilities IS NULL OR capabilities = '' OR capabilities = '[]')`
     );
     const tx = this.db.transaction(() => {
-      for (const modelId of modelIds) {
-        insert.run(providerId, modelId);
+      for (const m of models) {
+        const caps = this.encodeCapabilities(m.capabilities);
+        const proto = m.thinkProtocol ?? "";
+        insert.run(providerId, m.id, caps, proto);
+        // For rows that already existed but had empty capabilities, repopulate
+        // from the catalog so the UI doesn't show a row with no chips.
+        if (m.capabilities && m.capabilities.length > 0) {
+          heal.run(caps, proto, providerId, m.id);
+        }
       }
     });
     tx();
@@ -285,11 +361,31 @@ export class AppDatabase {
 
   // ─── Custom Models ─────────────────────────────────────────────────
 
-  addCustomModel(providerId: string, modelId: string, supportsThink: boolean, thinkLevels?: string[]) {
+  /**
+   * Insert a user-added model. `supportsThink` is derived from
+   * `capabilities.includes("reasoning")`; we also keep writing the legacy
+   * `supports_think` flag so v3 rows continue to make sense after a
+   * downgrade. `think_levels` is intentionally left empty — readers prefer
+   * the new `think_protocol` column when set.
+   */
+  addCustomModel(
+    providerId: string,
+    modelId: string,
+    capabilities: ModelCapability[],
+    thinkProtocol: ThinkProtocol | null
+  ) {
+    const supportsThink = capabilities.includes("reasoning") && thinkProtocol !== null;
     this.db
-      .prepare(`INSERT OR IGNORE INTO model_config (provider_id, model_id, enabled, think_enabled, think_budget, think_body_on, think_body_off, force_temperature, is_custom, supports_think, think_levels)
-        VALUES (?, ?, 1, 0, 'medium', '{}', '', '', 1, ?, ?)`)
-      .run(providerId, modelId, supportsThink ? 1 : 0, this.encodeLevels(thinkLevels));
+      .prepare(`INSERT OR IGNORE INTO model_config
+        (provider_id, model_id, enabled, think_enabled, think_budget, think_body_on, think_body_off, force_temperature, is_custom, supports_think, think_levels, capabilities, think_protocol)
+        VALUES (?, ?, 1, 0, 'medium', '{}', '', '', 1, ?, '', ?, ?)`)
+      .run(
+        providerId,
+        modelId,
+        supportsThink ? 1 : 0,
+        this.encodeCapabilities(capabilities),
+        thinkProtocol ?? ""
+      );
   }
 
   deleteCustomModel(providerId: string, modelId: string) {
@@ -298,24 +394,58 @@ export class AppDatabase {
       .run(providerId, modelId);
   }
 
-  getCustomModels(providerId: string): Array<{ modelId: string; supportsThink: boolean; thinkLevels?: string[] }> {
+  getCustomModels(providerId: string): Array<{
+    modelId: string;
+    capabilities: ModelCapability[];
+    thinkProtocol: ThinkProtocol | null;
+    /** @deprecated v3 fallback — readers should prefer `capabilities`. */
+    supportsThink: boolean;
+    /** @deprecated v3 fallback — readers should prefer `thinkProtocol`. */
+    thinkLevels?: string[];
+  }> {
     const rows = this.db
-      .prepare("SELECT model_id, supports_think, think_levels FROM model_config WHERE provider_id = ? AND is_custom = 1")
-      .all(providerId) as Array<{ model_id: string; supports_think: number; think_levels: string }>;
+      .prepare("SELECT model_id, supports_think, think_levels, capabilities, think_protocol FROM model_config WHERE provider_id = ? AND is_custom = 1")
+      .all(providerId) as Array<{
+        model_id: string;
+        supports_think: number;
+        think_levels: string;
+        capabilities: string;
+        think_protocol: string;
+      }>;
     return rows.map((r) => ({
       modelId: r.model_id,
+      capabilities: this.decodeCapabilities(r.capabilities),
+      thinkProtocol: (r.think_protocol || null) as ThinkProtocol | null,
       supportsThink: r.supports_think === 1,
       thinkLevels: this.decodeLevels(r.think_levels)
     }));
   }
 
-  getAllCustomModels(): Array<{ providerId: string; modelId: string; supportsThink: boolean; thinkLevels?: string[] }> {
+  getAllCustomModels(): Array<{
+    providerId: string;
+    modelId: string;
+    capabilities: ModelCapability[];
+    thinkProtocol: ThinkProtocol | null;
+    /** @deprecated v3 fallback — readers should prefer `capabilities`. */
+    supportsThink: boolean;
+    /** @deprecated v3 fallback — readers should prefer `thinkProtocol`. */
+    thinkLevels?: string[];
+  }> {
     const rows = this.db
-      .prepare("SELECT provider_id, model_id, supports_think, think_levels FROM model_config WHERE is_custom = 1")
-      .all() as Array<{ provider_id: string; model_id: string; supports_think: number; think_levels: string }>;
+      .prepare("SELECT provider_id, model_id, supports_think, think_levels, capabilities, think_protocol FROM model_config WHERE is_custom = 1")
+      .all() as Array<{
+        provider_id: string;
+        model_id: string;
+        supports_think: number;
+        think_levels: string;
+        capabilities: string;
+        think_protocol: string;
+      }>;
     return rows.map((r) => ({
       providerId: r.provider_id,
       modelId: r.model_id,
+      capabilities: this.decodeCapabilities(r.capabilities),
+      thinkProtocol: (r.think_protocol || null) as ThinkProtocol | null,
       supportsThink: r.supports_think === 1,
       thinkLevels: this.decodeLevels(r.think_levels)
     }));

@@ -23,11 +23,15 @@ export const backgroundClassMap: Record<
   light: {
     base: "#f5f5f5",
     top: "#ffffff",
-    side: "rgba(255,255,255,0.92)",
-    main: "rgba(250,250,250,0.96)",
+    // Both `side` and `main` are intentionally fully opaque on light shells —
+    // popover surfaces in the codebase paint with `bg-[var(--lp-main-bg)]`
+    // plus `backdrop-blur-2xl`, so any translucency lets the chat content
+    // bleed through and turns labels into ghosts.
+    side: "#fafafa",
+    main: "#ffffff",
     panel: "rgba(0,0,0,0.04)",
     panel2: "rgba(0,0,0,0.06)",
-    border: "rgba(0,0,0,0.12)"
+    border: "rgba(0,0,0,0.14)"
   }
 };
 
@@ -41,7 +45,7 @@ export const textClassMap: Record<TextColor, { main: string; muted: string; soft
   "warm-white": { main: "rgba(255,250,244,0.96)", muted: "rgba(255,241,222,0.48)", soft: "rgba(255,255,255,0.3)" },
   cream: { main: "rgba(250,242,229,0.95)", muted: "rgba(244,229,204,0.46)", soft: "rgba(255,250,242,0.28)" },
   "soft-gold": { main: "rgba(244,225,180,0.96)", muted: "rgba(234,205,145,0.52)", soft: "rgba(244,225,180,0.24)" },
-  charcoal: { main: "rgba(43,35,27,0.95)", muted: "rgba(91,76,57,0.62)", soft: "rgba(78,65,49,0.35)" },
+  charcoal: { main: "rgba(43,35,27,0.95)", muted: "rgba(91,76,57,0.7)", soft: "rgba(78,65,49,0.55)" },
   snow: { main: "rgba(255,255,255,0.96)", muted: "rgba(234,234,234,0.54)", soft: "rgba(255,255,255,0.28)" },
   linen: { main: "rgba(245,238,228,0.95)", muted: "rgba(220,207,190,0.54)", soft: "rgba(245,238,228,0.26)" },
   pearl: { main: "rgba(236,239,245,0.95)", muted: "rgba(198,203,214,0.54)", soft: "rgba(236,239,245,0.24)" },

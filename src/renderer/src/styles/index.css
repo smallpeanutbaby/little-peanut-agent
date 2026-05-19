@@ -173,3 +173,385 @@ select option:hover {
   0%, 100% { transform: scale(1);   opacity: 1; }
   50%      { transform: scale(1.4); opacity: 0.65; }
 }
+
+/* ── Popover surfaces (mode / provider / model dropdowns) ──────────────────
+   These dropdowns render via `createPortal` outside the app shell, so they
+   can't inherit the parent's text color. We pin every text node inside them
+   to the user's currently chosen ink color (`--lp-text`) so the labels
+   always match the rest of the UI — and stay readable on dark backgrounds,
+   not just light ones. The selector lives at specificity 011 (one class +
+   one element), which beats any single utility class on the button itself
+   (e.g. a leftover `text-[var(--lp-text)]/78`). Per-element colour utilities
+   on child spans (e.g. `text-[#10A37F]` on the green check) still win,
+   because the colour is set directly on the span, not inherited from the
+   button. */
+.lp-popover {
+  color: var(--lp-text);
+}
+
+.lp-popover button,
+.lp-popover [role="button"] {
+  color: var(--lp-text);
+}
+
+/* Translucent label utilities (`text-[var(--lp-text)]/60..90`) were tuned
+   for the original dark-on-dark layout where a low alpha read as "secondary
+   text". On light backgrounds — and inside dense toolbars on dark too —
+   the same alpha just makes labels look washed out. Pin them all back to
+   the fully-opaque ink colour so every label tracks the user's chosen
+   font colour. */
+.text-\[var\(--lp-text\)\]\/60,
+.text-\[var\(--lp-text\)\]\/70,
+.text-\[var\(--lp-text\)\]\/72,
+.text-\[var\(--lp-text\)\]\/78,
+.text-\[var\(--lp-text\)\]\/80,
+.text-\[var\(--lp-text\)\]\/82,
+.text-\[var\(--lp-text\)\]\/85,
+.text-\[var\(--lp-text\)\]\/86,
+.text-\[var\(--lp-text\)\]\/88,
+.text-\[var\(--lp-text\)\]\/90 {
+  color: var(--lp-text);
+}
+.hover\:text-\[var\(--lp-text\)\]\/85:hover {
+  color: var(--lp-text);
+}
+
+/* ── Think badge ───────────────────────────────────────────────────────────
+   Originally `bg-purple-500/20 text-purple-300`. On the dark shell the
+   purple-on-purple combo washes into a low-contrast smudge; on light it
+   nearly disappears. Re-spec it as a stronger fill + lighter ink that
+   tracks the active theme. */
+.lp-think-chip {
+  background-color: rgba(168, 85, 247, 0.22);
+  color: rgb(233 213 255);
+  border: 1px solid rgba(168, 85, 247, 0.4);
+  letter-spacing: 0.02em;
+}
+
+[data-bg="light"] .lp-think-chip {
+  background-color: rgba(126, 34, 206, 0.14);
+  color: rgb(88 28 135);
+  border-color: rgba(126, 34, 206, 0.35);
+}
+
+/* ── Light-background theme overrides ──────────────────────────────────────
+   The codebase historically used hard-coded translucent-white utilities
+   (`bg-white/[0.04]`, `border-white/[0.06]`, etc.) which were tuned for the
+   dark background. On `data-bg="light"` those surfaces become white-on-white
+   and disappear. Rather than refactor every callsite to read CSS variables,
+   we override the Tailwind-generated classes in one place so they paint with
+   matching black tints instead. The selectors mirror the exact escape rules
+   Tailwind v4 emits (`\/`, `\[`, `\]`, `\.`). */
+
+[data-bg="light"] {
+  color-scheme: light;
+}
+
+[data-bg="light"] select {
+  color-scheme: light;
+}
+
+[data-bg="light"] select option {
+  background-color: #ffffff;
+  color: rgba(0, 0, 0, 0.85);
+}
+
+/* Native scrollbar tint — barely visible on dark, but on light we need a
+   darker thumb against the white surface. */
+[data-bg="light"] * {
+  scrollbar-color: rgba(0, 0, 0, 0.18) transparent;
+}
+
+[data-bg="light"] *:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.2);
+}
+
+[data-bg="light"] *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.36);
+}
+
+[data-bg="light"] ::selection {
+  background: rgba(0, 0, 0, 0.16);
+}
+
+/* Static white background tints → matching dark tints */
+[data-bg="light"] .bg-white\/\[0\.02\] { background-color: rgba(0, 0, 0, 0.03); }
+[data-bg="light"] .bg-white\/\[0\.03\] { background-color: rgba(0, 0, 0, 0.04); }
+[data-bg="light"] .bg-white\/\[0\.04\] { background-color: rgba(0, 0, 0, 0.05); }
+[data-bg="light"] .bg-white\/\[0\.05\] { background-color: rgba(0, 0, 0, 0.05); }
+[data-bg="light"] .bg-white\/\[0\.06\] { background-color: rgba(0, 0, 0, 0.06); }
+[data-bg="light"] .bg-white\/\[0\.07\] { background-color: rgba(0, 0, 0, 0.07); }
+[data-bg="light"] .bg-white\/\[0\.08\] { background-color: rgba(0, 0, 0, 0.08); }
+[data-bg="light"] .bg-white\/10        { background-color: rgba(0, 0, 0, 0.08); }
+[data-bg="light"] .bg-white\/20        { background-color: rgba(0, 0, 0, 0.18); }
+[data-bg="light"] .bg-white\/30        { background-color: rgba(0, 0, 0, 0.28); }
+
+/* Hover background tints */
+[data-bg="light"] .hover\:bg-white\/\[0\.03\]:hover { background-color: rgba(0, 0, 0, 0.04); }
+[data-bg="light"] .hover\:bg-white\/\[0\.04\]:hover { background-color: rgba(0, 0, 0, 0.05); }
+[data-bg="light"] .hover\:bg-white\/\[0\.05\]:hover { background-color: rgba(0, 0, 0, 0.06); }
+[data-bg="light"] .hover\:bg-white\/\[0\.06\]:hover { background-color: rgba(0, 0, 0, 0.07); }
+[data-bg="light"] .hover\:bg-white\/\[0\.07\]:hover { background-color: rgba(0, 0, 0, 0.08); }
+[data-bg="light"] .hover\:bg-white\/\[0\.08\]:hover { background-color: rgba(0, 0, 0, 0.09); }
+
+/* Group-hover / group-active translucent washes */
+[data-bg="light"] .group:hover .group-hover\:bg-white\/20 { background-color: rgba(0, 0, 0, 0.18); }
+[data-bg="light"] .group:active .group-active\:bg-white\/30 { background-color: rgba(0, 0, 0, 0.28); }
+
+/* Borders — dark theme dividers vanish on white; we reach for slightly
+   stronger black tints so the divider is still subtle but visible. */
+[data-bg="light"] .border-white\/\[0\.06\] { border-color: rgba(0, 0, 0, 0.08); }
+[data-bg="light"] .border-white\/\[0\.08\] { border-color: rgba(0, 0, 0, 0.1); }
+[data-bg="light"] .border-white\/\[0\.1\]  { border-color: rgba(0, 0, 0, 0.12); }
+[data-bg="light"] .border-white\/\[0\.12\] { border-color: rgba(0, 0, 0, 0.14); }
+[data-bg="light"] .border-white\/\[0\.18\] { border-color: rgba(0, 0, 0, 0.2); }
+[data-bg="light"] .border-white\/6  { border-color: rgba(0, 0, 0, 0.08); }
+[data-bg="light"] .border-white\/8  { border-color: rgba(0, 0, 0, 0.1); }
+[data-bg="light"] .border-white\/10 { border-color: rgba(0, 0, 0, 0.12); }
+[data-bg="light"] .border-white\/20 { border-color: rgba(0, 0, 0, 0.22); }
+[data-bg="light"] .border-white\/30 { border-color: rgba(0, 0, 0, 0.3); }
+[data-bg="light"] .border-white\/40 { border-color: rgba(0, 0, 0, 0.36); }
+
+[data-bg="light"] .hover\:border-white\/\[0\.18\]:hover { border-color: rgba(0, 0, 0, 0.2); }
+[data-bg="light"] .focus-within\:border-white\/20:focus-within { border-color: rgba(0, 0, 0, 0.22); }
+[data-bg="light"] .focus\:border-white\/30:focus { border-color: rgba(0, 0, 0, 0.3); }
+
+/* Ring (focus halo) */
+[data-bg="light"] .ring-white\/10 { --tw-ring-color: rgba(0, 0, 0, 0.12); }
+[data-bg="light"] .ring-inset.ring-white\/10 { --tw-ring-color: rgba(0, 0, 0, 0.12); }
+
+/* The primary send button is `bg-white text-[#151515]`. On a light shell
+   that becomes invisible — flip it to a dark button with white text.
+   `.bg-white` is the pure-opaque utility; opacity-suffixed variants
+   (`bg-white/[0.04]`, `bg-white/10`, …) generate different class names so
+   this selector targets only the solid button surface. */
+[data-bg="light"] .bg-white {
+  background-color: #1f1f1f;
+  color: #ffffff;
+}
+[data-bg="light"] .text-\[\#151515\] {
+  color: #ffffff;
+}
+[data-bg="light"] .hover\:bg-white\/90:hover  { background-color: rgba(31, 31, 31, 0.92); }
+[data-bg="light"] .hover\:bg-white\/95:hover  { background-color: rgba(31, 31, 31, 0.95); }
+[data-bg="light"] .disabled\:hover\:bg-white:disabled:hover { background-color: #1f1f1f; }
+
+/* Translucent text utilities like `text-[var(--lp-text)]/78` create gentle
+   typographic hierarchy on dark backgrounds, but on a white shell the same
+   alpha values wash out into illegible whisper-text. On `data-bg="light"`
+   we force them all back to the fully-opaque user-chosen ink color so every
+   label in dropdowns, sidebars, and toolbars stays at full contrast. */
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/60,
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/70,
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/72,
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/78,
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/80,
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/82,
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/85,
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/86,
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/88,
+[data-bg="light"] .text-\[var\(--lp-text\)\]\/90 { color: var(--lp-text); }
+[data-bg="light"] .hover\:text-\[var\(--lp-text\)\]\/85:hover { color: var(--lp-text); }
+
+/* Coloured chips & accent text — on the dark shell these were chosen at the
+   100/200/300 lightness band so they would shimmer against black; on white
+   those lightnesses become invisible. Pin every accent we actually use to
+   the matching 700-band hue so the meaning of the color (warn, danger,
+   accent, brand…) is preserved while contrast stays accessible. */
+[data-bg="light"] .text-slate-200,
+[data-bg="light"] .text-slate-100    { color: rgb(51 65 85); }
+[data-bg="light"] .text-amber-200,
+[data-bg="light"] .text-amber-100,
+[data-bg="light"] .text-amber-300    { color: rgb(146 64 14); }
+[data-bg="light"] .text-emerald-200,
+[data-bg="light"] .text-emerald-100,
+[data-bg="light"] .text-emerald-300  { color: rgb(6 95 70); }
+[data-bg="light"] .text-sky-200,
+[data-bg="light"] .text-sky-100,
+[data-bg="light"] .text-sky-300      { color: rgb(7 89 133); }
+[data-bg="light"] .text-violet-200,
+[data-bg="light"] .text-violet-100,
+[data-bg="light"] .text-violet-300   { color: rgb(76 29 149); }
+[data-bg="light"] .text-rose-200,
+[data-bg="light"] .text-rose-100,
+[data-bg="light"] .text-rose-300     { color: rgb(159 18 57); }
+[data-bg="light"] .text-cyan-200,
+[data-bg="light"] .text-cyan-100,
+[data-bg="light"] .text-cyan-300     { color: rgb(14 116 144); }
+[data-bg="light"] .text-fuchsia-200,
+[data-bg="light"] .text-fuchsia-100,
+[data-bg="light"] .text-fuchsia-300  { color: rgb(134 25 143); }
+[data-bg="light"] .text-purple-200,
+[data-bg="light"] .text-purple-300   { color: rgb(88 28 135); }
+[data-bg="light"] .text-red-300,
+[data-bg="light"] .text-red-200      { color: rgb(153 27 27); }
+[data-bg="light"] .text-red-400,
+[data-bg="light"] .hover\:text-red-400:hover { color: rgb(185 28 28); }
+[data-bg="light"] .text-red-300\/90  { color: rgb(153 27 27 / 0.9); }
+[data-bg="light"] .text-blue-300     { color: rgb(30 64 175); }
+[data-bg="light"] .text-green-400    { color: rgb(21 128 61); }
+[data-bg="light"] .text-yellow-400   { color: rgb(161 98 7); }
+
+/* Coloured backgrounds & borders sourced from the 400/500 bands. The alpha
+   stays the same as the dark theme so the badges keep their "tinted glass"
+   feel, but the underlying hue is shifted toward a darker shade so the
+   chip remains readable against the white substrate. */
+[data-bg="light"] .bg-purple-500\/20  { background-color: rgba(126, 34, 206, 0.16); }
+[data-bg="light"] .bg-blue-500\/20    { background-color: rgba(29, 78, 216, 0.16); }
+[data-bg="light"] .bg-red-500\/10     { background-color: rgba(185, 28, 28, 0.1); }
+[data-bg="light"] .bg-red-500\/20     { background-color: rgba(185, 28, 28, 0.18); }
+[data-bg="light"] .hover\:bg-red-500\/10:hover  { background-color: rgba(185, 28, 28, 0.1); }
+[data-bg="light"] .hover\:bg-red-500\/15:hover  { background-color: rgba(185, 28, 28, 0.15); }
+[data-bg="light"] .hover\:bg-red-500\/20:hover  { background-color: rgba(185, 28, 28, 0.18); }
+[data-bg="light"] .bg-emerald-500\/15 { background-color: rgba(4, 120, 87, 0.14); }
+[data-bg="light"] .bg-amber-500\/15   { background-color: rgba(180, 83, 9, 0.14); }
+[data-bg="light"] .bg-blue-500\/10    { background-color: rgba(29, 78, 216, 0.1); }
+[data-bg="light"] .bg-purple-500\/10  { background-color: rgba(126, 34, 206, 0.1); }
+
+[data-bg="light"] .border-red-500\/30     { border-color: rgba(185, 28, 28, 0.32); }
+[data-bg="light"] .border-red-500\/40     { border-color: rgba(185, 28, 28, 0.4); }
+[data-bg="light"] .border-purple-500\/40  { border-color: rgba(126, 34, 206, 0.4); }
+[data-bg="light"] .border-blue-400\/60    { border-color: rgba(29, 78, 216, 0.5); }
+[data-bg="light"] .ring-blue-400\/30      { --tw-ring-color: rgba(29, 78, 216, 0.32); }
+
+/* ModeSelector "chip" tints — the accentTints map uses `*-400/15` washes
+   over the dark shell. Those wash to nearly invisible on white, so we
+   re-tint with slightly stronger, slightly darker base hues. */
+[data-bg="light"] .bg-slate-400\/10,
+[data-bg="light"] .bg-slate-400\/15   { background-color: rgba(71, 85, 105, 0.12); }
+[data-bg="light"] .bg-amber-400\/15,
+[data-bg="light"] .bg-amber-400\/20   { background-color: rgba(180, 83, 9, 0.14); }
+[data-bg="light"] .bg-emerald-400\/15,
+[data-bg="light"] .bg-emerald-400\/20 { background-color: rgba(4, 120, 87, 0.14); }
+[data-bg="light"] .bg-sky-400\/15,
+[data-bg="light"] .bg-sky-400\/20     { background-color: rgba(2, 132, 199, 0.14); }
+[data-bg="light"] .bg-violet-400\/15,
+[data-bg="light"] .bg-violet-400\/20  { background-color: rgba(124, 58, 237, 0.14); }
+[data-bg="light"] .bg-rose-400\/15,
+[data-bg="light"] .bg-rose-400\/20    { background-color: rgba(225, 29, 72, 0.14); }
+[data-bg="light"] .bg-cyan-400\/15,
+[data-bg="light"] .bg-cyan-400\/20    { background-color: rgba(8, 145, 178, 0.14); }
+[data-bg="light"] .bg-fuchsia-400\/15,
+[data-bg="light"] .bg-fuchsia-400\/20 { background-color: rgba(192, 38, 211, 0.14); }
+
+[data-bg="light"] .border-slate-400\/30   { border-color: rgba(71, 85, 105, 0.36); }
+[data-bg="light"] .border-amber-400\/40   { border-color: rgba(180, 83, 9, 0.44); }
+[data-bg="light"] .border-emerald-400\/40 { border-color: rgba(4, 120, 87, 0.44); }
+[data-bg="light"] .border-sky-400\/40     { border-color: rgba(2, 132, 199, 0.44); }
+[data-bg="light"] .border-violet-400\/40  { border-color: rgba(124, 58, 237, 0.44); }
+[data-bg="light"] .border-rose-400\/40    { border-color: rgba(225, 29, 72, 0.44); }
+[data-bg="light"] .border-cyan-400\/40    { border-color: rgba(8, 145, 178, 0.44); }
+[data-bg="light"] .border-fuchsia-400\/40 { border-color: rgba(192, 38, 211, 0.44); }
+
+[data-bg="light"] .ring-slate-400\/40   { --tw-ring-color: rgba(71, 85, 105, 0.4); }
+[data-bg="light"] .ring-amber-400\/40   { --tw-ring-color: rgba(180, 83, 9, 0.4); }
+[data-bg="light"] .ring-emerald-400\/40 { --tw-ring-color: rgba(4, 120, 87, 0.4); }
+[data-bg="light"] .ring-sky-400\/40     { --tw-ring-color: rgba(2, 132, 199, 0.4); }
+[data-bg="light"] .ring-violet-400\/40  { --tw-ring-color: rgba(124, 58, 237, 0.4); }
+[data-bg="light"] .ring-rose-400\/40    { --tw-ring-color: rgba(225, 29, 72, 0.4); }
+[data-bg="light"] .ring-cyan-400\/40    { --tw-ring-color: rgba(8, 145, 178, 0.4); }
+[data-bg="light"] .ring-fuchsia-400\/40 { --tw-ring-color: rgba(192, 38, 211, 0.4); }
+
+/* Brand-green inline buttons (e.g. send / connect indicators) use the literal
+   `#10A37F` hex. The hue itself is fine on either theme — but the 10%
+   tinted-fill variant becomes nearly invisible on white. */
+[data-bg="light"] .bg-\[\#10A37F\]\/10 { background-color: rgba(16, 163, 127, 0.12); }
+
+/* Some dark-theme drop shadows assumed a dark substrate (large blur with
+   black at high alpha). On white they read as a heavy grey halo. Tone them
+   down so popovers feel airy. */
+[data-bg="light"] .shadow-\[0_16px_48px_rgba\(0\,0\,0\,0\.4\)\] {
+  box-shadow: 0 16px 48px rgba(15, 23, 42, 0.12);
+}
+[data-bg="light"] .shadow-\[0_8px_30px_rgba\(0\,0\,0\,0\.25\)\] {
+  box-shadow: 0 8px 30px rgba(15, 23, 42, 0.08);
+}
+[data-bg="light"] .shadow-\[0_18px_50px_rgba\(0\,0\,0\,0\.32\)\] {
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.12);
+}
+[data-bg="light"] .shadow-\[0_20px_80px_rgba\(0\,0\,0\,0\.35\)\] {
+  box-shadow: 0 20px 80px rgba(15, 23, 42, 0.14);
+}
+[data-bg="light"] .shadow-\[0_24px_64px_rgba\(0\,0\,0\,0\.55\)\] {
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.18);
+}
+[data-bg="light"] .shadow-\[0_6px_20px_rgba\(0\,0\,0\,0\.4\)\] {
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.16);
+}
+[data-bg="light"] .shadow-\[0_10px_36px_rgba\(0\,0\,0\,0\.32\)\] {
+  box-shadow: 0 10px 36px rgba(15, 23, 42, 0.12);
+}
+
+/* ── Agent message markdown ────────────────────────────────────────────
+   react-markdown emits plain semantic HTML; we apply spacing + a
+   monospace block treatment so transcripts render the way the user
+   expects in a chat panel (think Claude/ChatGPT body styling, not a
+   blog post). Scoped to .lp-markdown so we don't accidentally restyle
+   markdown elsewhere in the app. */
+.lp-markdown { font-size: 14px; line-height: 1.65; }
+.lp-markdown p { margin: 0 0 0.6em; }
+.lp-markdown p:last-child { margin-bottom: 0; }
+.lp-markdown ul,
+.lp-markdown ol { margin: 0.2em 0 0.6em 1.25em; }
+.lp-markdown ul { list-style: disc outside; }
+.lp-markdown ol { list-style: decimal outside; }
+.lp-markdown li { margin: 0.15em 0; }
+.lp-markdown code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+  padding: 0.08em 0.32em;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+}
+.lp-markdown pre {
+  margin: 0.4em 0 0.75em;
+  padding: 0.7em 0.85em;
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid var(--lp-border);
+  border-radius: 10px;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.lp-markdown pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+}
+.lp-markdown h1,
+.lp-markdown h2,
+.lp-markdown h3,
+.lp-markdown h4 {
+  font-weight: 600;
+  margin: 0.6em 0 0.35em;
+  line-height: 1.25;
+}
+.lp-markdown h1 { font-size: 1.2em; }
+.lp-markdown h2 { font-size: 1.1em; }
+.lp-markdown h3 { font-size: 1.02em; }
+.lp-markdown blockquote {
+  margin: 0.4em 0;
+  padding: 0.15em 0.8em;
+  border-left: 3px solid var(--lp-border);
+  color: var(--lp-soft-text);
+}
+.lp-markdown a {
+  color: #60a5fa;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.lp-markdown table {
+  display: block;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 0.4em 0;
+}
+.lp-markdown th,
+.lp-markdown td {
+  border: 1px solid var(--lp-border);
+  padding: 0.3em 0.55em;
+}
+.lp-markdown th { background: rgba(255, 255, 255, 0.04); }
+[data-bg="light"] .lp-markdown code { background: rgba(15, 23, 42, 0.08); }
+[data-bg="light"] .lp-markdown pre { background: rgba(15, 23, 42, 0.06); }

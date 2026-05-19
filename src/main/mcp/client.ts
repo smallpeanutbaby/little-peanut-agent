@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import type { McpServerConfig, McpTestResult } from "@shared/types";
+import type { McpServerConfig, McpTestResult } from "@shared/types.js";
 
 /**
  * Minimal MCP (Model Context Protocol) client implementations focused on the

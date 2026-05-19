@@ -95,17 +95,6 @@ export function TongyiIcon({ size = 20 }: { size?: number }) {
   );
 }
 
-export function BaiduIcon({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <path
-        d="M9.5 4C8.1 4 7 5.3 7 7s1.1 3 2.5 3S12 8.7 12 7s-1.1-3-2.5-3zm5 0C13.1 4 12 5.3 12 7s1.1 3 2.5 3S17 8.7 17 7s-1.1-3-2.5-3zM5.5 8C4.1 8 3 9.3 3 11s1.1 3 2.5 3S8 12.7 8 11s-1.1-3-2.5-3zm13 0C17.1 8 16 9.3 16 11s1.1 3 2.5 3S21 12.7 21 11s-1.1-3-2.5-3zM12 13c-3.3 0-6 2-6 5s2.7 4 6 4 6-1 6-4-2.7-5-6-5z"
-        fill="#2932E1"
-      />
-    </svg>
-  );
-}
-
 export function MiniMaxIcon({ size = 20 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
@@ -198,7 +187,6 @@ export const PROVIDER_ICON_MAP: Record<string, React.FC<{ size?: number }>> = {
   azure: AzureOpenAIIcon,
   moonshot: MoonshotIcon,
   tongyi: TongyiIcon,
-  baidu: BaiduIcon,
   minimax: MiniMaxIcon,
   siliconflow: SiliconFlowIcon,
   gitee: GiteeAIIcon,

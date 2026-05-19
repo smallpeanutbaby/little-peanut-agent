@@ -97,10 +97,16 @@ function SettingsPageInner({ onClose, appVersion }: SettingsPageProps) {
     >
       {/* Left rail */}
       <aside className="flex w-[248px] shrink-0 flex-col border-r border-white/[0.06] bg-black/30">
+        {/* macOS traffic-light spacer (draggable) — mirrors the main shell so
+            the native window buttons don't sit on top of clickable UI. */}
+        <div
+          className="h-[52px] flex-shrink-0"
+          style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+        />
         {/* Prominent "back to home" affordance — discoverable in the rail's
             top-left corner the way every major desktop settings page (Cursor,
             VSCode, GitHub) places it. The Esc key still works as a shortcut. */}
-        <div className="px-4 pt-4">
+        <div className="px-4 pt-1">
           <button
             type="button"
             onClick={onClose}

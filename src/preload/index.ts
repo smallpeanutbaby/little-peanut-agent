@@ -1,4 +1,11 @@
 import type {
+  AgentMessagePart,
+  AgentPermissionResponse,
+  AgentRunEvent,
+  AgentStartRunInput,
+  AgentTaskItem,
+  AgentTodoItem,
+  AgentToolRun,
   AppearanceSettings,
   ChatAttachment,
   ChatMessage,
@@ -7,14 +14,17 @@ import type {
   CheckConnectivityRequest,
   CheckConnectivityResult,
   Conversation,
+  GitStatusResult,
   McpServerConfig,
   McpTestResult,
+  ModelCapability,
   ModelConfig,
   Project,
   ProviderConfig,
-  ThinkBudget
-} from "@shared/types";
-import { IPC, chatStreamChannel } from "@shared/ipc-channels";
+  ThinkBudget,
+  ThinkProtocol
+} from "@shared/types.js";
+import { IPC, agentRunChannel, chatStreamChannel } from "@shared/ipc-channels.js";
 import { contextBridge, ipcRenderer } from "electron";
 
 const electronAPI = {
@@ -31,8 +41,16 @@ const electronAPI = {
     ipcRenderer.invoke(IPC.models.saveConfig, config) as Promise<ModelConfig[]>,
   setAllModelsEnabled: (providerId: string, enabled: boolean) =>
     ipcRenderer.invoke(IPC.models.setAllEnabled, providerId, enabled) as Promise<ModelConfig[]>,
-  bulkInitModels: (providerId: string, modelIds: string[]) =>
-    ipcRenderer.invoke(IPC.models.bulkInit, providerId, modelIds) as Promise<ModelConfig[]>,
+  /**
+   * Seed the model_config table for a provider. Accepts either the legacy
+   * `string[]` shape (model ids) or the new
+   * `{id, capabilities?, thinkProtocol?}[]` shape — the IPC handler
+   * normalises both.
+   */
+  bulkInitModels: (
+    providerId: string,
+    models: Array<string | { id: string; capabilities?: ModelCapability[]; thinkProtocol?: ThinkProtocol | null }>
+  ) => ipcRenderer.invoke(IPC.models.bulkInit, providerId, models) as Promise<ModelConfig[]>,
   // Provider config
   getAllProviderConfigs: () => ipcRenderer.invoke(IPC.providers.getAll) as Promise<ProviderConfig[]>,
   getProviderConfig: (providerId: string) =>
@@ -41,22 +59,52 @@ const electronAPI = {
     ipcRenderer.invoke(IPC.providers.save, config) as Promise<ProviderConfig[]>,
   deleteProviderConfig: (providerId: string) =>
     ipcRenderer.invoke(IPC.providers.delete, providerId) as Promise<ProviderConfig[]>,
-  // Custom models
-  addCustomModel: (providerId: string, modelId: string, supportsThink: boolean, thinkLevels?: string[]) =>
-    ipcRenderer.invoke(IPC.models.addCustom, providerId, modelId, supportsThink, thinkLevels) as Promise<
-      Array<{ modelId: string; supportsThink: boolean; thinkLevels?: string[] }>
+  // Custom models — v4 surface: capabilities[] + thinkProtocol.
+  addCustomModel: (
+    providerId: string,
+    modelId: string,
+    capabilities: ModelCapability[],
+    thinkProtocol: ThinkProtocol | null
+  ) =>
+    ipcRenderer.invoke(IPC.models.addCustom, providerId, modelId, capabilities, thinkProtocol) as Promise<
+      Array<{
+        modelId: string;
+        capabilities: ModelCapability[];
+        thinkProtocol: ThinkProtocol | null;
+        supportsThink: boolean;
+        thinkLevels?: string[];
+      }>
     >,
   deleteCustomModel: (providerId: string, modelId: string) =>
     ipcRenderer.invoke(IPC.models.deleteCustom, providerId, modelId) as Promise<
-      Array<{ modelId: string; supportsThink: boolean; thinkLevels?: string[] }>
+      Array<{
+        modelId: string;
+        capabilities: ModelCapability[];
+        thinkProtocol: ThinkProtocol | null;
+        supportsThink: boolean;
+        thinkLevels?: string[];
+      }>
     >,
   getCustomModels: (providerId: string) =>
     ipcRenderer.invoke(IPC.models.getCustom, providerId) as Promise<
-      Array<{ modelId: string; supportsThink: boolean; thinkLevels?: string[] }>
+      Array<{
+        modelId: string;
+        capabilities: ModelCapability[];
+        thinkProtocol: ThinkProtocol | null;
+        supportsThink: boolean;
+        thinkLevels?: string[];
+      }>
     >,
   getAllCustomModels: () =>
     ipcRenderer.invoke(IPC.models.getAllCustom) as Promise<
-      Array<{ providerId: string; modelId: string; supportsThink: boolean; thinkLevels?: string[] }>
+      Array<{
+        providerId: string;
+        modelId: string;
+        capabilities: ModelCapability[];
+        thinkProtocol: ThinkProtocol | null;
+        supportsThink: boolean;
+        thinkLevels?: string[];
+      }>
     >,
 
   // Connectivity check
@@ -90,6 +138,14 @@ const electronAPI = {
 
   // Native dialogs
   pickDirectory: () => ipcRenderer.invoke(IPC.dialog.pickDirectory) as Promise<string | null>,
+
+  // Shell — reveal a path in Finder / Explorer. Returns "" on success or an
+  // error string on failure (Electron `shell.openPath` contract).
+  openPath: (path: string) => ipcRenderer.invoke(IPC.shell.openPath, path) as Promise<string>,
+
+  // Git — structured `git status` for a project's working directory.
+  getGitStatus: (projectPath: string) =>
+    ipcRenderer.invoke(IPC.git.status, projectPath) as Promise<GitStatusResult>,
 
   // Conversations
   listConversations: (projectId: string | null) =>
@@ -133,7 +189,43 @@ const electronAPI = {
   deleteMcpServer: (id: string) => ipcRenderer.invoke(IPC.mcp.delete, id) as Promise<void>,
   setMcpServerEnabled: (id: string, enabled: boolean) =>
     ipcRenderer.invoke(IPC.mcp.setEnabled, id, enabled) as Promise<McpServerConfig | null>,
-  testMcpServer: (cfg: McpServerConfig) => ipcRenderer.invoke(IPC.mcp.test, cfg) as Promise<McpTestResult>
+  testMcpServer: (cfg: McpServerConfig) => ipcRenderer.invoke(IPC.mcp.test, cfg) as Promise<McpTestResult>,
+
+  // ─── Agent Runtime ──────────────────────────────────────────────────
+  startAgentRun: (input: AgentStartRunInput) =>
+    ipcRenderer.invoke(IPC.agent.startRun, input) as Promise<{ runId: string }>,
+  cancelAgentRun: (runId: string) =>
+    ipcRenderer.invoke(IPC.agent.cancelRun, runId) as Promise<void>,
+  answerAgentPermission: (resp: AgentPermissionResponse) =>
+    ipcRenderer.invoke(IPC.agent.answerPermission, resp) as Promise<void>,
+  onAgentRun: (runId: string, handler: (ev: AgentRunEvent) => void) => {
+    const channel = agentRunChannel(runId);
+    const listener = (_event: unknown, payload: AgentRunEvent) => handler(payload);
+    ipcRenderer.on(channel, listener);
+    return () => ipcRenderer.removeListener(channel, listener);
+  },
+  listAgentParts: (conversationId: string) =>
+    ipcRenderer.invoke(IPC.agent.listParts, conversationId) as Promise<AgentMessagePart[]>,
+  listAgentToolRuns: (conversationId: string) =>
+    ipcRenderer.invoke(IPC.agent.listToolRuns, conversationId) as Promise<AgentToolRun[]>,
+  listAgentTodos: (projectId: string, conversationId?: string | null) =>
+    ipcRenderer.invoke(IPC.agent.listTodos, projectId, conversationId ?? null) as Promise<AgentTodoItem[]>,
+  listAgentTasks: (projectId: string, limit?: number) =>
+    ipcRenderer.invoke(IPC.agent.listTasks, projectId, limit) as Promise<AgentTaskItem[]>,
+  cancelAgentTask: (taskId: string) =>
+    ipcRenderer.invoke(IPC.agent.cancelTask, taskId) as Promise<boolean>,
+  agentCostSummary: (conversationId: string) =>
+    ipcRenderer.invoke(IPC.agent.costSummary, conversationId) as Promise<{
+      promptTokens: number;
+      completionTokens: number;
+      costUsd: number;
+    }>,
+  listInterruptedConversations: () =>
+    ipcRenderer.invoke(IPC.agent.listInterrupted) as Promise<
+      Array<{ id: string; name: string | null; projectId: string | null; lastRunId: string | null; lastRunStartedAt: number | null }>
+    >,
+  discardInterruptedConversation: (conversationId: string) =>
+    ipcRenderer.invoke(IPC.agent.discardInterrupted, conversationId) as Promise<void>
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI);

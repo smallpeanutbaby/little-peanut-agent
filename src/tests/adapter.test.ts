@@ -7,7 +7,7 @@ import {
   mapBudget,
   parseSse,
   splitDataUrl
-} from "../main/ai/adapter";
+} from "../main/ai/adapter.js";
 
 describe("adapter helpers", () => {
   describe("splitDataUrl", () => {

@@ -1,4 +1,11 @@
 import type {
+  AgentMessagePart,
+  AgentPermissionResponse,
+  AgentRunEvent,
+  AgentStartRunInput,
+  AgentTaskItem,
+  AgentTodoItem,
+  AgentToolRun,
   AppInfo,
   AppearanceSettings,
   ChatAttachment,
@@ -8,12 +15,15 @@ import type {
   CheckConnectivityRequest,
   CheckConnectivityResult,
   Conversation,
+  GitStatusResult,
   McpServerConfig,
   McpTestResult,
+  ModelCapability,
   ModelConfig,
   Project,
   ProviderConfig,
-  ThinkBudget
+  ThinkBudget,
+  ThinkProtocol
 } from "@shared/types";
 
 declare global {
@@ -28,17 +38,51 @@ declare global {
       getModelConfigs: (providerId: string) => Promise<ModelConfig[]>;
       saveModelConfig: (config: ModelConfig) => Promise<ModelConfig[]>;
       setAllModelsEnabled: (providerId: string, enabled: boolean) => Promise<ModelConfig[]>;
-      bulkInitModels: (providerId: string, modelIds: string[]) => Promise<ModelConfig[]>;
+      /** Accepts either model-id strings (legacy) or `{id, capabilities, thinkProtocol}` objects (v4). */
+      bulkInitModels: (
+        providerId: string,
+        models: Array<string | { id: string; capabilities?: ModelCapability[]; thinkProtocol?: ThinkProtocol | null }>
+      ) => Promise<ModelConfig[]>;
       // Provider config
       getAllProviderConfigs: () => Promise<ProviderConfig[]>;
       getProviderConfig: (providerId: string) => Promise<ProviderConfig | null>;
       saveProviderConfig: (config: ProviderConfig) => Promise<ProviderConfig[]>;
       deleteProviderConfig: (providerId: string) => Promise<ProviderConfig[]>;
-      // Custom models
-      addCustomModel: (providerId: string, modelId: string, supportsThink: boolean, thinkLevels?: string[]) => Promise<Array<{ modelId: string; supportsThink: boolean; thinkLevels?: string[] }>>;
-      deleteCustomModel: (providerId: string, modelId: string) => Promise<Array<{ modelId: string; supportsThink: boolean; thinkLevels?: string[] }>>;
-      getCustomModels: (providerId: string) => Promise<Array<{ modelId: string; supportsThink: boolean; thinkLevels?: string[] }>>;
-      getAllCustomModels: () => Promise<Array<{ providerId: string; modelId: string; supportsThink: boolean; thinkLevels?: string[] }>>;
+      // Custom models — v4 surface: capabilities[] + thinkProtocol.
+      addCustomModel: (
+        providerId: string,
+        modelId: string,
+        capabilities: ModelCapability[],
+        thinkProtocol: ThinkProtocol | null
+      ) => Promise<Array<{
+        modelId: string;
+        capabilities: ModelCapability[];
+        thinkProtocol: ThinkProtocol | null;
+        supportsThink: boolean;
+        thinkLevels?: string[];
+      }>>;
+      deleteCustomModel: (providerId: string, modelId: string) => Promise<Array<{
+        modelId: string;
+        capabilities: ModelCapability[];
+        thinkProtocol: ThinkProtocol | null;
+        supportsThink: boolean;
+        thinkLevels?: string[];
+      }>>;
+      getCustomModels: (providerId: string) => Promise<Array<{
+        modelId: string;
+        capabilities: ModelCapability[];
+        thinkProtocol: ThinkProtocol | null;
+        supportsThink: boolean;
+        thinkLevels?: string[];
+      }>>;
+      getAllCustomModels: () => Promise<Array<{
+        providerId: string;
+        modelId: string;
+        capabilities: ModelCapability[];
+        thinkProtocol: ThinkProtocol | null;
+        supportsThink: boolean;
+        thinkLevels?: string[];
+      }>>;
       // Connectivity check
       checkConnectivity: (req: CheckConnectivityRequest) => Promise<CheckConnectivityResult>;
       // Chat streaming
@@ -52,6 +96,10 @@ declare global {
       deleteProject: (id: string) => Promise<void>;
       // Native dialogs
       pickDirectory: () => Promise<string | null>;
+      // Shell
+      openPath: (path: string) => Promise<string>;
+      // Git
+      getGitStatus: (projectPath: string) => Promise<GitStatusResult>;
       // Conversations
       listConversations: (projectId: string | null) => Promise<Conversation[]>;
       getConversation: (id: string) => Promise<Conversation | null>;
@@ -76,6 +124,29 @@ declare global {
       deleteMcpServer: (id: string) => Promise<void>;
       setMcpServerEnabled: (id: string, enabled: boolean) => Promise<McpServerConfig | null>;
       testMcpServer: (cfg: McpServerConfig) => Promise<McpTestResult>;
+      // Agent runtime
+      startAgentRun: (input: AgentStartRunInput) => Promise<{ runId: string }>;
+      cancelAgentRun: (runId: string) => Promise<void>;
+      answerAgentPermission: (resp: AgentPermissionResponse) => Promise<void>;
+      onAgentRun: (runId: string, handler: (ev: AgentRunEvent) => void) => () => void;
+      listAgentParts: (conversationId: string) => Promise<AgentMessagePart[]>;
+      listAgentToolRuns: (conversationId: string) => Promise<AgentToolRun[]>;
+      listAgentTodos: (projectId: string, conversationId?: string | null) => Promise<AgentTodoItem[]>;
+      listAgentTasks: (projectId: string, limit?: number) => Promise<AgentTaskItem[]>;
+      cancelAgentTask: (taskId: string) => Promise<boolean>;
+      agentCostSummary: (conversationId: string) => Promise<{
+        promptTokens: number;
+        completionTokens: number;
+        costUsd: number;
+      }>;
+      listInterruptedConversations: () => Promise<Array<{
+        id: string;
+        name: string | null;
+        projectId: string | null;
+        lastRunId: string | null;
+        lastRunStartedAt: number | null;
+      }>>;
+      discardInterruptedConversation: (conversationId: string) => Promise<void>;
     };
   }
 }

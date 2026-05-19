@@ -11,7 +11,7 @@ export function ModeMenu({ open, onClose }: { open: boolean; onClose: () => void
   const items = [t("modeMenu.addPhotos"), t("modeMenu.commands"), t("modeMenu.skills"), t("modeMenu.mcpServers")];
 
   return (
-    <div className="absolute bottom-24 left-0 z-30 w-[360px] rounded-[24px] border border-[var(--lp-border)] bg-[rgba(52,49,48,0.96)] py-3 shadow-[0_18px_50px_rgba(0,0,0,0.32)] backdrop-blur-2xl">
+    <div className="absolute bottom-24 left-0 z-30 w-[360px] rounded-[24px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] py-3 shadow-[0_18px_50px_rgba(0,0,0,0.32)] backdrop-blur-2xl">
       <div className="px-5 pb-3 text-[14px] font-medium text-[var(--lp-text)]">{t("modeMenu.title")}</div>
       {items.map((item, index) => (
         <button

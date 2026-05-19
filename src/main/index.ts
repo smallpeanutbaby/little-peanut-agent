@@ -1,11 +1,23 @@
 import { app, BrowserWindow } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { AppDatabase } from "./db/database";
-import { cancelAllStreamsForWindow, registerIpc } from "./ipc/index";
+import { AppDatabase } from "./db/database.js";
+import { cancelAllStreamsForWindow, registerIpc } from "./ipc/index.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Process-wide error handlers — without these, an async failure in the main
+// process (e.g. a native module ABI mismatch when opening better-sqlite3) is
+// silently swallowed by Electron, the main process stays alive doing nothing,
+// and the user just sees "no window". With these, the real error shows up in
+// the dev-server terminal where it belongs.
+process.on("uncaughtException", (err) => {
+  console.error("[main] uncaughtException:", err?.stack || err);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[main] unhandledRejection:", reason);
+});
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -79,6 +91,9 @@ app.whenReady().then(() => {
       createWindow();
     }
   });
+}).catch((err) => {
+  // Keep this — `app.whenReady()` rejections used to crash silently.
+  console.error("[main] whenReady chain failed:", err?.stack || err);
 });
 
 app.on("window-all-closed", () => {

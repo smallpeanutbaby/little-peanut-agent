@@ -23,7 +23,7 @@ vi.mock("electron", () => ({
 }));
 
 // Important: import AFTER vi.mock so the mock is picked up.
-const { encryptSecret, decryptSecret, isEncrypted } = await import("../main/security/secret-store");
+const { encryptSecret, decryptSecret, isEncrypted } = await import("../main/security/secret-store.js");
 
 describe("secret-store", () => {
   beforeEach(() => {

@@ -1,4 +1,4 @@
-import type { ThinkBudget } from "./types";
+import type { ThinkBudget } from "./types.js";
 
 /**
  * Chat mode — applies a curated system prompt and default sampling parameters
@@ -13,6 +13,7 @@ import type { ThinkBudget } from "./types";
  */
 export type ChatModeId =
   | "chat"
+  | "agent"
   | "writing"
   | "code"
   | "learning"
@@ -30,7 +31,7 @@ export interface ChatMode {
   /** A single emoji or short symbol shown in compact UI */
   icon: string;
   /** Tailwind accent color (used for badge tinting) */
-  accent: "slate" | "amber" | "emerald" | "sky" | "violet" | "rose" | "cyan" | "fuchsia";
+  accent: "slate" | "amber" | "emerald" | "sky" | "violet" | "rose" | "cyan" | "fuchsia" | "indigo";
   /** System prompt baked into every request when this mode is active. */
   systemPrompt: string;
   /** Default temperature when this mode is active (provider must support it). */
@@ -54,7 +55,7 @@ export interface ChatMode {
 }
 
 /* -------------------------------------------------------------------------- */
-/* The 8 built-in modes                                                       */
+/* The 9 built-in modes                                                       */
 /* -------------------------------------------------------------------------- */
 
 export const CHAT_MODES: ChatMode[] = [
@@ -71,6 +72,26 @@ export const CHAT_MODES: ChatMode[] = [
     defaultTemperature: 0.7,
     contextMaxMessages: 30,
     contextCharBudget: 40_000
+  },
+  {
+    id: "agent",
+    nameKey: "modes.agent.name",
+    descKey: "modes.agent.desc",
+    icon: "⚡",
+    accent: "indigo",
+    systemPrompt:
+      "You are Agent, an action-oriented assistant operating inside the user's project workspace. " +
+      "The conversation is scoped to the project's working directory; assume the user wants concrete, executable help — not generic prose. " +
+      "Strategy: (1) Restate the task in one line so we're aligned. (2) Lay out the smallest viable plan (3-6 bullet steps). " +
+      "(3) Execute step by step in subsequent turns, citing file paths when you reference code. " +
+      "When proposing code or file changes, show a diff or the full block in a fenced code block tagged with the language. " +
+      "When unsure about project context, ask ONE targeted clarifying question (never a wall of questions). " +
+      "Bias toward action: if a task is reversible and well-specified, ship the change instead of asking permission. " +
+      "Avoid filler phrases like 'Certainly!' / 'Here's what I'll do' — get to the substance.",
+    defaultTemperature: 0.4,
+    defaultThinkBudget: "medium",
+    contextMaxMessages: 50,
+    contextCharBudget: 120_000
   },
   {
     id: "writing",

@@ -1,32 +1,27 @@
-import type { ThinkBudget } from "@shared/types";
+import type { ModelCapability, ThinkProtocol } from "@shared/types";
 
-/** Lightweight model descriptor used by the provider catalog UI. */
+/**
+ * Lightweight model descriptor used by the provider catalog UI.
+ *
+ *  - `capabilities`  : multi-label, drives capability chips, attach-image
+ *                       availability, and future filtering.
+ *  - `thinkProtocol` : reasoning family — `PROTOCOL_LEVELS` in
+ *                       `think-presets.ts` derives the level picker from this.
+ *                       Omit when the model has no reasoning capability.
+ */
 export interface ProviderModel {
   id: string;
-  /** Whether the model supports any form of reasoning/thinking. */
-  think?: boolean;
-  /**
-   * Reasoning effort levels supported by this model.
-   * - If omitted while `think` is true → binary on/off (no granular budget)
-   * - If provided → only these levels are exposed in the UI
-   */
-  thinkLevels?: ThinkBudget[];
+  capabilities: ModelCapability[];
+  thinkProtocol?: ThinkProtocol;
 }
 
-// ── Reasoning effort presets per provider API ──
-// OpenAI       reasoning_effort:     minimal | low | medium | high
-// Anthropic    budget_tokens:        low(1024) | medium(8192) | high(24000) | max(64000)
-// Gemini       thinkingBudget:       minimal | low | medium | high (or dynamic / off)
-// DeepSeek R1  no granular budget    → binary on/off
-// Zhipu GLM    thinking.type:        enabled | disabled → binary
-// Moonshot K2  thinking:             enabled | disabled → binary
-// Qwen3        thinking_budget:      low | medium | high (token-budget mapped)
-// Ernie        thinking:             enabled | disabled → binary
-// MiniMax M    always-on reasoning   → binary on/off
-export const OPENAI_LEVELS: ThinkBudget[] = ["minimal", "low", "medium", "high"];
-export const ANTHROPIC_LEVELS: ThinkBudget[] = ["low", "medium", "high", "max"];
-export const GEMINI_LEVELS: ThinkBudget[] = ["minimal", "low", "medium", "high"];
-export const QWEN_LEVELS: ThinkBudget[] = ["low", "medium", "high"];
+// ── Capability shortcuts ─────────────────────────────────────────────
+// Most modern chat models fall into one of these three shapes. Aliasing them
+// keeps the catalog skimmable instead of hiding behind 5-element literals.
+const TEXT_TOOLS: ModelCapability[] = ["text", "tools"];
+const VISION_CHAT: ModelCapability[] = ["text", "vision", "tools"];
+const REASONING_CHAT: ModelCapability[] = ["text", "reasoning", "tools"];
+const VISION_REASONING_CHAT: ModelCapability[] = ["text", "vision", "reasoning", "tools"];
 
 /**
  * Built-in AI provider catalog. The renderer renders this verbatim in the
@@ -42,202 +37,155 @@ export const AI_PROVIDERS_DEFAULT = [
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
     models: [
-      // ── GPT-5.x (reasoning models, support reasoning_effort) ──
-      { id: "gpt-5.5", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.5-pro", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.5-mini", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.5-nano", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.3", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.3-pro", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.3-mini", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.2", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.2-pro", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.1", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5.1-codex", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5-pro", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5-mini", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "gpt-5-nano", think: true, thinkLevels: OPENAI_LEVELS },
-      // ── o-series (reasoning models, support reasoning_effort) ──
-      { id: "o4-mini", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "o3", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "o3-mini", think: true, thinkLevels: OPENAI_LEVELS },
-      { id: "o1", think: true, thinkLevels: OPENAI_LEVELS },
-      // ── GPT-4.x (non-reasoning chat models) ──
-      { id: "gpt-4.1" },
-      { id: "gpt-4.1-mini" },
-      { id: "gpt-4.1-nano" },
-      { id: "gpt-4o" },
-      { id: "gpt-4o-mini" },
-      { id: "gpt-4-turbo" },
-      // ── Legacy ──
-      { id: "gpt-3.5-turbo" }
+      // ── Frontier (reasoning_effort: none/low/medium/high/xhigh) ──
+      // gpt-5.5 is the flagship; mini/nano variants live under gpt-5.4.
+      // All current models accept image input. Source: platform.openai.com/docs/models.
+      { id: "gpt-5.5", capabilities: VISION_REASONING_CHAT, thinkProtocol: "openai" },
+      { id: "gpt-5.5-pro", capabilities: VISION_REASONING_CHAT, thinkProtocol: "openai" },
+      { id: "gpt-5.4", capabilities: VISION_REASONING_CHAT, thinkProtocol: "openai" },
+      { id: "gpt-5.4-mini", capabilities: VISION_REASONING_CHAT, thinkProtocol: "openai" },
+      { id: "gpt-5.4-nano", capabilities: VISION_REASONING_CHAT, thinkProtocol: "openai" }
     ] as ProviderModel[]
   },
   {
     id: "anthropic",
     name: "Anthropic",
     baseUrl: "https://api.anthropic.com/v1",
+    // Source: docs.anthropic.com/en/docs/about-claude/models/overview (2026-05).
+    // IDs use the dashed dateless form Anthropic returns from /v1/models.
+    // claude-sonnet-4 / claude-opus-4 (May 2025) are EOL on 2026-06-15 → omitted.
     models: [
-      // ── Extended Thinking (budget_tokens) ──
-      { id: "claude-opus-4.7", think: true, thinkLevels: ANTHROPIC_LEVELS },
-      { id: "claude-opus-4.7-fast", think: true, thinkLevels: ANTHROPIC_LEVELS },
-      { id: "claude-opus-4.6", think: true, thinkLevels: ANTHROPIC_LEVELS },
-      { id: "claude-opus-4.5", think: true, thinkLevels: ANTHROPIC_LEVELS },
-      { id: "claude-opus-4.1", think: true, thinkLevels: ANTHROPIC_LEVELS },
-      { id: "claude-opus-4", think: true, thinkLevels: ANTHROPIC_LEVELS },
-      { id: "claude-sonnet-4.6", think: true, thinkLevels: ANTHROPIC_LEVELS },
-      { id: "claude-sonnet-4.5", think: true, thinkLevels: ANTHROPIC_LEVELS },
-      { id: "claude-sonnet-4", think: true, thinkLevels: ANTHROPIC_LEVELS },
-      // ── Standard (no extended thinking) ──
-      { id: "claude-haiku-4.5" },
-      { id: "claude-3.5-haiku" },
-      { id: "claude-3-haiku" }
+      // ── Current ──
+      { id: "claude-opus-4-7", capabilities: VISION_REASONING_CHAT, thinkProtocol: "anthropic" },
+      { id: "claude-sonnet-4-6", capabilities: VISION_REASONING_CHAT, thinkProtocol: "anthropic" },
+      { id: "claude-haiku-4-5", capabilities: VISION_REASONING_CHAT, thinkProtocol: "anthropic" },
+      // ── Still available (older generations) ──
+      { id: "claude-opus-4-6", capabilities: VISION_REASONING_CHAT, thinkProtocol: "anthropic" },
+      { id: "claude-sonnet-4-5", capabilities: VISION_REASONING_CHAT, thinkProtocol: "anthropic" },
+      { id: "claude-opus-4-5", capabilities: VISION_REASONING_CHAT, thinkProtocol: "anthropic" },
+      { id: "claude-opus-4-1", capabilities: VISION_REASONING_CHAT, thinkProtocol: "anthropic" }
     ] as ProviderModel[]
   },
   {
     id: "google",
     name: "Google Gemini",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    // Source: ai.google.dev/gemini-api/docs/models + firebase.google.com/docs/ai-logic/models.
+    // Gemini reasoning models all accept the same thinkingBudget; -1 = dynamic.
     models: [
-      // ── Thinking (thinkingBudget) ──
-      { id: "gemini-3.1-pro-preview", think: true, thinkLevels: GEMINI_LEVELS },
-      { id: "gemini-3-flash-preview", think: true, thinkLevels: GEMINI_LEVELS },
-      { id: "gemini-2.5-pro", think: true, thinkLevels: GEMINI_LEVELS },
-      { id: "gemini-2.5-flash", think: true, thinkLevels: GEMINI_LEVELS },
-      { id: "gemini-2.5-flash-lite", think: true, thinkLevels: GEMINI_LEVELS },
-      // ── Standard (no thinking) ──
-      { id: "gemini-3.1-flash-lite" },
-      { id: "gemini-2.0-flash-001" },
-      { id: "gemini-2.0-flash-lite-001" }
+      // ── Gemini 3.x (preview + stable) ──
+      { id: "gemini-3.1-pro-preview", capabilities: VISION_REASONING_CHAT, thinkProtocol: "gemini" },
+      { id: "gemini-3-flash-preview", capabilities: VISION_REASONING_CHAT, thinkProtocol: "gemini" },
+      { id: "gemini-3.1-flash-lite", capabilities: VISION_REASONING_CHAT, thinkProtocol: "gemini" },
+      // ── Gemini 2.5 (long-term stable) ──
+      { id: "gemini-2.5-pro", capabilities: VISION_REASONING_CHAT, thinkProtocol: "gemini" },
+      { id: "gemini-2.5-flash", capabilities: VISION_REASONING_CHAT, thinkProtocol: "gemini" },
+      { id: "gemini-2.5-flash-lite", capabilities: VISION_REASONING_CHAT, thinkProtocol: "gemini" }
     ] as ProviderModel[]
   },
   {
     id: "deepseek",
     name: "DeepSeek",
     baseUrl: "https://api.deepseek.com/v1",
+    // Source: api-docs.deepseek.com (2026-05). Catalog collapsed to v4 — the
+    // legacy `deepseek-chat`/`deepseek-reasoner` aliases now just route to
+    // v4-flash non-thinking / thinking modes and are scheduled for removal.
     models: [
-      // ── Reasoning (R1 — always-on, no budget) ──
-      { id: "deepseek-r1", think: true },
-      { id: "deepseek-r1-0528", think: true },
-      // ── Hybrid Reasoning (V3.1+ — thinking can be toggled) ──
-      { id: "deepseek-v4-pro", think: true },
-      { id: "deepseek-v4-flash", think: true },
-      { id: "deepseek-v3.2", think: true },
-      { id: "deepseek-v3.1-terminus", think: true },
-      { id: "deepseek-chat-v3.1", think: true },
-      // ── Chat (no thinking) ──
-      { id: "deepseek-chat-v3-0324" },
-      { id: "deepseek-chat" }
+      { id: "deepseek-v4-pro", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "deepseek-v4-flash", capabilities: REASONING_CHAT, thinkProtocol: "binary" }
     ] as ProviderModel[]
   },
   {
     id: "zhipu",
     name: "智谱AI",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
+    // Source: docs.bigmodel.cn/cn/guide/start/model-overview (2026-05).
+    // GLM hybrid-reasoning models toggle thinking via `thinking.type=enabled`.
     models: [
-      // ── Thinking (hybrid reasoning, binary enabled/disabled) ──
-      { id: "glm-5.1", think: true },
-      { id: "glm-5", think: true },
-      { id: "glm-5-turbo", think: true },
-      { id: "glm-5v-turbo", think: true },
-      { id: "glm-4.7", think: true },
-      { id: "glm-4.7-flash", think: true },
-      { id: "glm-4.6", think: true },
-      { id: "glm-4.6v", think: true },
-      { id: "glm-4.5", think: true },
-      { id: "glm-4.5-air", think: true },
-      { id: "glm-4.5v", think: true },
+      // ── Flagship ──
+      { id: "glm-5.1", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "glm-5", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "glm-5-turbo", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "glm-5v-turbo", capabilities: VISION_REASONING_CHAT, thinkProtocol: "binary" },
+      // ── 4.x family ──
+      { id: "glm-4.7", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "glm-4.7-flashx", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "glm-4.6", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "glm-4.6v", capabilities: VISION_REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "glm-4.5-air", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "glm-4.5-airx", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
       // ── Standard (no thinking) ──
-      { id: "glm-4-32b" }
+      { id: "glm-4-long", capabilities: TEXT_TOOLS }
     ] as ProviderModel[]
   },
   {
     id: "moonshot",
     name: "Moonshot",
     baseUrl: "https://api.moonshot.cn/v1",
+    // Source: platform.kimi.ai/docs/models (2026-05).
+    // The original kimi-k2 / k2-0905 / k2-turbo / k2-0711 batch retires on
+    // 2026-05-25 — already past their best-by, so they're left out and users
+    // are funneled to k2.5 / k2.6 (both natively multi-modal).
     models: [
-      // ── Reasoning (binary on/off) ──
-      { id: "kimi-k2.6", think: true },
-      { id: "kimi-k2.5", think: true },
-      { id: "kimi-k2-thinking", think: true },
-      { id: "kimi-k2-0905", think: true },
-      { id: "kimi-k2", think: true },
-      // ── Chat ──
-      { id: "moonshot-v1-128k" },
-      { id: "moonshot-v1-32k" },
-      { id: "moonshot-v1-8k" }
+      { id: "kimi-k2.6", capabilities: VISION_REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "kimi-k2.5", capabilities: VISION_REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "moonshot-v1-128k", capabilities: TEXT_TOOLS },
+      { id: "moonshot-v1-32k", capabilities: TEXT_TOOLS },
+      { id: "moonshot-v1-8k", capabilities: TEXT_TOOLS }
     ] as ProviderModel[]
   },
   {
     id: "tongyi",
     name: "通义千问",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    // Source: help.aliyun.com/zh/model-studio (2026-05).
+    // qwen3.x reasoning models expose `enable_thinking` + `thinking_budget`
+    // (low/medium/high). qwen3-coder and the older qwen-plus/qwen-long are
+    // plain chat models with tools but no native reasoning.
     models: [
-      // ── Reasoning / Thinking (thinking_budget) ──
-      { id: "qwen3.6-max-preview", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3.6-plus", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3.6-flash", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3.5-plus-02-15", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3.5-flash-02-23", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3-max", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3-max-thinking", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3-235b-a22b", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3-30b-a3b", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3-32b", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3-14b", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "qwen3-8b", think: true, thinkLevels: QWEN_LEVELS },
-      // ── Code (qwen3-coder series are NOT reasoning models) ──
-      { id: "qwen3-coder" },
-      { id: "qwen3-coder-plus" },
+      // ── Reasoning (Qwen "thinking" protocol) ──
+      { id: "qwen3-max", capabilities: REASONING_CHAT, thinkProtocol: "qwen" },
+      { id: "qwen3.6-plus", capabilities: REASONING_CHAT, thinkProtocol: "qwen" },
+      { id: "qwen3.6-flash", capabilities: REASONING_CHAT, thinkProtocol: "qwen" },
+      { id: "qwen3.5-plus", capabilities: REASONING_CHAT, thinkProtocol: "qwen" },
+      { id: "qwen3.5-flash", capabilities: REASONING_CHAT, thinkProtocol: "qwen" },
+      // ── Code (no native thinking budget) ──
+      { id: "qwen3-coder-plus", capabilities: TEXT_TOOLS },
+      { id: "qwen3-coder-flash", capabilities: TEXT_TOOLS },
       // ── Chat ──
-      { id: "qwen-plus" },
-      { id: "qwen-long" }
-    ] as ProviderModel[]
-  },
-  {
-    id: "baidu",
-    name: "百度智能云",
-    baseUrl: "https://qianfan.baidubce.com/v2",
-    models: [
-      // ── Reasoning (binary on/off) ──
-      { id: "ernie-4.5-300b-a47b", think: true },
-      { id: "ernie-4.5-21b-a3b-thinking", think: true },
-      // ── Chat ──
-      { id: "ernie-4.5-21b-a3b" },
-      { id: "ernie-4.5-vl-424b-a47b" },
-      { id: "ernie-4.5-vl-28b-a3b" }
+      { id: "qwen-plus", capabilities: TEXT_TOOLS },
+      { id: "qwen-long", capabilities: TEXT_TOOLS },
+      { id: "qwen-turbo", capabilities: TEXT_TOOLS }
     ] as ProviderModel[]
   },
   {
     id: "minimax",
     name: "MiniMax",
     baseUrl: "https://api.minimax.chat/v1",
+    // Source: platform.minimaxi.com/docs/release-notes/models (2026-05).
+    // M2.x is always-reasoning (binary toggle); abab/Hailuo are separate
+    // product lines (speech/music/video) and not chat models.
     models: [
-      // ── Reasoning (always-on / binary) ──
-      { id: "minimax-m2.7", think: true },
-      { id: "minimax-m2.5", think: true },
-      { id: "minimax-m2.1", think: true },
-      { id: "minimax-m2", think: true },
-      { id: "minimax-m1", think: true },
-      // ── Chat ──
-      { id: "minimax-01" }
+      { id: "MiniMax-M2.7", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "MiniMax-M2.7-highspeed", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "MiniMax-M2.5", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "MiniMax-M2.5-highspeed", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "MiniMax-M1", capabilities: REASONING_CHAT, thinkProtocol: "binary" }
     ] as ProviderModel[]
   },
   {
     id: "siliconflow",
     name: "硅基流动",
     baseUrl: "https://api.siliconflow.cn/v1",
+    // Source: siliconflow.cn/models (2026-05). SiliconFlow is an aggregator;
+    // we ship a small representative set — users typically paste in whatever
+    // exact ID they need via "Add Model".
     models: [
-      // ── Reasoning (Qwen3 supports granular budget; DeepSeek-R1 is binary) ──
-      { id: "Qwen/Qwen3-235B-A22B", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "Qwen/Qwen3-30B-A3B", think: true, thinkLevels: QWEN_LEVELS },
-      { id: "deepseek-ai/DeepSeek-R1", think: true },
-      { id: "deepseek-ai/DeepSeek-R1-0528", think: true },
-      // ── Chat ──
-      { id: "deepseek-ai/DeepSeek-V3-0324" },
-      { id: "Qwen/Qwen2.5-72B-Instruct" },
-      { id: "THUDM/GLM-4-9B-Chat" }
+      { id: "deepseek-ai/DeepSeek-V4-Flash", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "Qwen/Qwen3-VL-32B-Instruct", capabilities: VISION_CHAT },
+      { id: "zai-org/GLM-5.1", capabilities: REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "moonshotai/Kimi-K2.6", capabilities: VISION_REASONING_CHAT, thinkProtocol: "binary" },
+      { id: "MiniMaxAI/MiniMax-M2.5", capabilities: REASONING_CHAT, thinkProtocol: "binary" }
     ] as ProviderModel[]
   }
 ];
@@ -256,4 +204,15 @@ export interface CustomProvider {
   name: string;
   protocol: string;
   baseUrl: string;
+}
+
+/**
+ * Look up the catalog entry for a (provider, model) pair. Returns undefined
+ * for custom models or unknown ids. Used by App.tsx / database.ts to seed
+ * capabilities + thinkProtocol when a row is missing them.
+ */
+export function findCatalogModel(providerId: string, modelId: string): ProviderModel | undefined {
+  return AI_PROVIDERS_DEFAULT
+    .find((p) => p.id === providerId)?.models
+    .find((m) => m.id === modelId);
 }

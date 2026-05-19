@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CHAT_MODES, CHAT_MODE_MAP, compressMessages, estimateTokens, getMode } from "@shared/modes";
+import { CHAT_MODES, CHAT_MODE_MAP, compressMessages, estimateTokens, getMode } from "@shared/modes.js";
 
 describe("modes / context compression", () => {
   describe("getMode", () => {

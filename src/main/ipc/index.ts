@@ -1,4 +1,4 @@
-import { BrowserWindow, dialog, ipcMain } from "electron";
+import { BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { randomUUID } from "node:crypto";
 import type {
   AppInfo,
@@ -9,17 +9,22 @@ import type {
   CheckConnectivityRequest,
   CheckConnectivityResult,
   Conversation,
+  GitStatusResult,
   McpServerConfig,
+  ModelCapability,
   ModelConfig,
   Project,
   ProviderConfig,
-  ThinkBudget
-} from "@shared/types";
-import { IPC, chatStreamChannel } from "@shared/ipc-channels";
-import type { AppDatabase } from "../db/database";
-import { getAdapter } from "../ai/adapter";
-import { getMode, compressMessages } from "@shared/modes";
-import { testMcpServer } from "../mcp/client";
+  ThinkBudget,
+  ThinkProtocol
+} from "@shared/types.js";
+import { IPC, chatStreamChannel } from "@shared/ipc-channels.js";
+import type { AppDatabase } from "../db/database.js";
+import { getAdapter } from "../ai/adapter.js";
+import { getMode, compressMessages } from "@shared/modes.js";
+import { testMcpServer } from "../mcp/client.js";
+import { getGitStatus } from "../git/status.js";
+import { registerAgentIpc, cancelAllAgentRunsForSender } from "../agent/ipc.js";
 
 /** Tracks active streaming requests so the renderer can cancel them. */
 const activeStreams = new Map<string, AbortController>();
@@ -50,8 +55,12 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
     database.setAllModelsEnabled(providerId, enabled);
     return database.getModelConfigs(providerId);
   });
-  ipcMain.handle(IPC.models.bulkInit, (_event, providerId: string, modelIds: string[]) => {
-    database.bulkInitModels(providerId, modelIds);
+  ipcMain.handle(IPC.models.bulkInit, (_event, providerId: string, models: Array<string | { id: string; capabilities?: ModelCapability[]; thinkProtocol?: ThinkProtocol | null }>) => {
+    // Accept both the new {id, capabilities, thinkProtocol}[] shape and the
+    // legacy `string[]` shape so older renderer builds keep working through
+    // a deploy.
+    const normalised = models.map((m) => (typeof m === "string" ? { id: m } : m));
+    database.bulkInitModels(providerId, normalised);
     return database.getModelConfigs(providerId);
   });
 
@@ -72,10 +81,19 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
   });
 
   // ─── Custom Models ─────────────────────────────────────────────────
-  ipcMain.handle(IPC.models.addCustom, (_event, providerId: string, modelId: string, supportsThink: boolean, thinkLevels?: string[]) => {
-    database.addCustomModel(providerId, modelId, supportsThink, thinkLevels);
-    return database.getCustomModels(providerId);
-  });
+  ipcMain.handle(
+    IPC.models.addCustom,
+    (
+      _event,
+      providerId: string,
+      modelId: string,
+      capabilities: ModelCapability[],
+      thinkProtocol: ThinkProtocol | null
+    ) => {
+      database.addCustomModel(providerId, modelId, capabilities ?? ["text"], thinkProtocol ?? null);
+      return database.getCustomModels(providerId);
+    }
+  );
   ipcMain.handle(IPC.models.deleteCustom, (_event, providerId: string, modelId: string) => {
     database.deleteCustomModel(providerId, modelId);
     return database.getCustomModels(providerId);
@@ -269,6 +287,20 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
   ipcMain.handle(IPC.messages.delete, (_e, id: string) => database.deleteMessage(id));
   ipcMain.handle(IPC.conversations.previews, (_e, ids: string[]) => database.getConversationPreviews(ids));
 
+  // ─── Shell ────────────────────────────────────────────────────────
+  // Open the given absolute path in the OS file manager. Returns "" on
+  // success (Electron's contract) or a human-readable error string. We
+  // forward the error verbatim so the renderer can surface it.
+  ipcMain.handle(IPC.shell.openPath, async (_e, path: string): Promise<string> => {
+    if (!path || typeof path !== "string") return "invalid path";
+    return shell.openPath(path);
+  });
+
+  // ─── Git ──────────────────────────────────────────────────────────
+  ipcMain.handle(IPC.git.status, async (_e, projectPath: string): Promise<GitStatusResult> => {
+    return getGitStatus(projectPath);
+  });
+
   // ─── MCP Servers ──────────────────────────────────────────────────
   ipcMain.handle(IPC.mcp.list, () => database.listMcpServers());
   ipcMain.handle(IPC.mcp.get, (_e, id: string) => database.getMcpServer(id));
@@ -279,12 +311,20 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
     return database.getMcpServer(id);
   });
   ipcMain.handle(IPC.mcp.test, async (_e, cfg: McpServerConfig) => testMcpServer(cfg));
+
+  // ─── Agent Runtime ─────────────────────────────────────────────────
+  registerAgentIpc(database);
 }
 
 /** Convenience: when window is closed, abort any in-flight streams owned by it.
  *  Wired in from `main/index.ts` via the `closed` window event so users don't
  *  pay for orphaned API tokens / network activity after closing the window. */
-export function cancelAllStreamsForWindow(_win: BrowserWindow) {
+export function cancelAllStreamsForWindow(win: BrowserWindow) {
   for (const ac of activeStreams.values()) ac.abort();
   activeStreams.clear();
+  try {
+    cancelAllAgentRunsForSender(win.webContents);
+  } catch {
+    /* ignore */
+  }
 }

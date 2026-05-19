@@ -4,8 +4,9 @@ import type {
   ChatStreamEvent,
   CheckConnectivityRequest,
   CheckConnectivityResult,
-  ThinkBudget
-} from "@shared/types";
+  ThinkBudget,
+  ThinkProtocol
+} from "@shared/types.js";
 
 /* -------------------------------------------------------------------------- */
 /* Multimodal helpers — build provider-specific content arrays                */
@@ -99,27 +100,60 @@ function trimSlash(s: string): string {
 }
 
 /**
- * Map qualitative think budget to a provider-specific numeric / textual value.
+ * Map a qualitative {@link ThinkBudget} to a wire-format reasoning value for
+ * the given {@link ThinkProtocol}.
  *
- * NOTE: We only ship adapters for openai / anthropic / gemini today. The
- * legacy `qwen` branch lived here but was never wired into the factory, so
- * it was dead code; it stays removed until we ship a real Qwen adapter.
+ *  - `openai`    → string reasoning_effort enum   (minimal/low/medium/high/xhigh)
+ *  - `anthropic` → numeric budget_tokens          (1024/8192/24000/64000)
+ *  - `gemini`    → numeric thinkingBudget          (-1 dynamic / 256 / 1024 / 8192 / 24576)
+ *  - `qwen`      → string thinking_budget enum    (low/medium/high)
+ *  - `binary`    → no value, just enable a flag; returns `true` to signal "on"
+ *
+ * Returns `undefined` for the "off" / "no budget" cases (caller should skip
+ * setting any body field). Values that don't exist on a given protocol
+ * (e.g. `dynamic` outside Gemini, `xhigh` outside OpenAI) clamp into the
+ * closest supported level so old persisted budgets keep working.
  */
-export function mapBudget(provider: "openai" | "anthropic" | "gemini", b?: ThinkBudget) {
+export function mapBudget(
+  protocol: ThinkProtocol,
+  b?: ThinkBudget
+): string | number | boolean | undefined {
   if (!b || b === "none") return undefined;
-  if (provider === "openai") {
-    // reasoning_effort: minimal | low | medium | high
-    return ({ minimal: "minimal", low: "low", medium: "medium", high: "high", max: "high", xhigh: "high" } as const)[b];
+  if (protocol === "openai") {
+    // dynamic is Gemini-only; map it down so the call still has *some*
+    // effort level (medium is the OpenAI "balanced" recommendation).
+    return ({ dynamic: "medium", minimal: "minimal", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "xhigh" } as const)[b];
   }
-  if (provider === "anthropic") {
-    // budget_tokens — number
-    return ({ minimal: 1024, low: 1024, medium: 8192, high: 24000, max: 64000, xhigh: 64000 } as const)[b];
+  if (protocol === "anthropic") {
+    return ({ dynamic: 8192, minimal: 1024, low: 1024, medium: 8192, high: 24000, xhigh: 64000, max: 64000 } as const)[b];
   }
-  if (provider === "gemini") {
-    // thinkingBudget — number (or -1 = dynamic)
-    return ({ minimal: 256, low: 1024, medium: 8192, high: 24576, max: 24576, xhigh: 24576 } as const)[b];
+  if (protocol === "gemini") {
+    // -1 enables dynamic thinking (model picks the budget itself).
+    return ({ dynamic: -1, minimal: 256, low: 1024, medium: 8192, high: 24576, xhigh: 24576, max: 24576 } as const)[b];
+  }
+  if (protocol === "qwen") {
+    // DashScope only exposes low / medium / high; clamp others.
+    return ({ dynamic: "medium", minimal: "low", low: "low", medium: "medium", high: "high", xhigh: "high", max: "high" } as const)[b];
+  }
+  if (protocol === "binary") {
+    // No budget level — just signal that thinking should be enabled.
+    return true;
   }
   return undefined;
+}
+
+/**
+ * Resolve the active reasoning protocol for a request. Renderer builds since
+ * v4 pass `thinkProtocol` explicitly; for older clients we fall back to the
+ * adapter-default that historically applied. Returns `null` when reasoning
+ * shouldn't be encoded at all.
+ */
+function resolveProtocol(
+  req: ChatRequestOptions,
+  adapterDefault: ThinkProtocol
+): ThinkProtocol | null {
+  if (req.thinkProtocol === null) return null;
+  return req.thinkProtocol ?? adapterDefault;
 }
 
 /** Wrap fetch with timeout. */
@@ -134,17 +168,45 @@ async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs = 15
 }
 
 async function readErrorMessage(res: Response): Promise<string> {
+  const statusTag = `[HTTP ${res.status}${res.statusText ? " " + res.statusText : ""}]`;
   try {
     const text = await res.text();
     try {
       const json = JSON.parse(text);
-      return json.error?.message || json.message || json.error || text || `HTTP ${res.status}`;
+      const body =
+        json.error?.message || json.message || (typeof json.error === "string" ? json.error : null) || text;
+      return body ? `${statusTag} ${body}` : statusTag;
     } catch {
-      return text || `HTTP ${res.status}`;
+      return text ? `${statusTag} ${text}` : statusTag;
     }
   } catch {
-    return `HTTP ${res.status}`;
+    return statusTag;
   }
+}
+
+/**
+ * Some upstream gateways (notably 3rd-party OpenAI-compatible relays) accept
+ * the basic chat-completion shape but choke on the newer `reasoning_effort`
+ * field or on a streaming `Accept: text/event-stream` request — yet they
+ * succeed on a non-streaming 1-token probe (which is what our connectivity
+ * checker sends). When that happens the message they return tends to be
+ * vague ("Service temporarily unavailable", "request failed", 5xx). Append a
+ * short hint so the user knows what to try next rather than chasing the
+ * gateway. The hint is *additive* — it never replaces the upstream message.
+ */
+function diagnosticHint(opts: { sentReasoningField: boolean; httpStatus?: number }): string | null {
+  const hints: string[] = [];
+  if (opts.sentReasoningField) {
+    hints.push("此次请求包含 reasoning_effort/thinking 字段，部分第三方中转代理不支持该字段——可尝试在模型旁的下拉里把『思考』关掉再发。");
+  }
+  if (opts.httpStatus && opts.httpStatus >= 500) {
+    hints.push("上游返回 5xx，多为代理或上游 API 临时不可用，过一会再试或换一个模型。");
+  } else if (opts.httpStatus === 429) {
+    hints.push("上游限流（429），稍候再试或更换密钥/模型。");
+  } else if (opts.httpStatus === 400) {
+    hints.push("上游 400 通常是请求体字段不被代理识别（如 reasoning_effort、stream、tools 等），可尝试关闭『思考』或更换为更标准的模型名。");
+  }
+  return hints.length === 0 ? null : `\n\n💡 ${hints.join(" ")}`;
 }
 
 /**
@@ -289,9 +351,34 @@ class OpenAIAdapter implements ProviderAdapter {
     };
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.maxTokens !== undefined) body.max_tokens = req.maxTokens;
+    // Track whether we ended up attaching any "advanced reasoning" body fields.
+    // This is used purely to enrich the error message when an upstream gateway
+    // rejects the request — vague "Service temporarily unavailable" replies
+    // are dramatically easier to debug if the user knows the request shape.
+    let sentReasoningField = false;
     if (req.thinkEnabled) {
-      const effort = mapBudget("openai", req.thinkBudget);
-      if (effort) body.reasoning_effort = effort;
+      // OpenAI Chat Completions is shared by many providers — we branch by
+      // the model's declared protocol to pick the right body field.
+      // Defaults to "openai" when the renderer didn't specify (old build).
+      const protocol = resolveProtocol(req, "openai");
+      if (protocol === "openai") {
+        const effort = mapBudget("openai", req.thinkBudget);
+        if (effort) {
+          body.reasoning_effort = effort;
+          sentReasoningField = true;
+        }
+      } else if (protocol === "qwen") {
+        // DashScope OpenAI-compatible: enable_thinking + thinking_budget enum.
+        body.enable_thinking = true;
+        sentReasoningField = true;
+        const level = mapBudget("qwen", req.thinkBudget);
+        if (typeof level === "string") body.thinking_budget = level;
+      } else if (protocol === "binary") {
+        // No level — just enable. DeepSeek-R1 ignores this (always-on), others
+        // (Moonshot Kimi-thinking / Zhipu GLM / MiniMax M) read it.
+        body.enable_thinking = true;
+        sentReasoningField = true;
+      }
     }
 
     let res: Response;
@@ -307,7 +394,9 @@ class OpenAIAdapter implements ProviderAdapter {
       return;
     }
     if (!res.ok || !res.body) {
-      yield { type: "error", message: await readErrorMessage(res), code: String(res.status) };
+      const base = await readErrorMessage(res);
+      const hint = diagnosticHint({ sentReasoningField, httpStatus: res.status });
+      yield { type: "error", message: hint ? `${base}${hint}` : base, code: String(res.status) };
       return;
     }
 
@@ -380,8 +469,12 @@ class AnthropicAdapter implements ProviderAdapter {
     if (system) body.system = system;
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.thinkEnabled) {
-      const budget = mapBudget("anthropic", req.thinkBudget);
-      if (budget) body.thinking = { type: "enabled", budget_tokens: budget };
+      // Anthropic Messages only ever exposes the "anthropic" protocol.
+      const protocol = resolveProtocol(req, "anthropic");
+      if (protocol === "anthropic") {
+        const budget = mapBudget("anthropic", req.thinkBudget);
+        if (typeof budget === "number") body.thinking = { type: "enabled", budget_tokens: budget };
+      }
     }
 
     let res: Response;
@@ -477,8 +570,13 @@ class GeminiAdapter implements ProviderAdapter {
     if (req.maxTokens !== undefined) genCfg.maxOutputTokens = req.maxTokens;
     if (req.temperature !== undefined) genCfg.temperature = req.temperature;
     if (req.thinkEnabled) {
-      const budget = mapBudget("gemini", req.thinkBudget);
-      if (budget !== undefined) genCfg.thinkingConfig = { thinkingBudget: budget };
+      // Gemini only ever exposes the "gemini" protocol; dynamic is encoded
+      // as `-1` per the GA spec.
+      const protocol = resolveProtocol(req, "gemini");
+      if (protocol === "gemini") {
+        const budget = mapBudget("gemini", req.thinkBudget);
+        if (typeof budget === "number") genCfg.thinkingConfig = { thinkingBudget: budget };
+      }
     }
     if (Object.keys(genCfg).length > 0) body.generationConfig = genCfg;
 

@@ -1,20 +1,69 @@
 ﻿import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import type { AppearanceSettings, ChatAttachment, Conversation, ModelConfig, Project, ProviderConfig, ThinkBudget } from "@shared/types";
+import type {
+  AppearanceSettings,
+  ChatAttachment,
+  Conversation,
+  ModelCapability,
+  ModelConfig,
+  Project,
+  ProviderConfig,
+  ThinkBudget,
+  ThinkProtocol
+} from "@shared/types";
 import { useUiStore } from "./store/useUiStore";
 import { PROVIDER_ICON_MAP } from "./components/ProviderIcons";
 import { ChatPanel } from "./components/ChatPanel";
+import { ProjectLandingPanel } from "./components/ProjectLandingPanel";
 import { SettingsPage } from "./components/SettingsPage";
 import { CHAT_MODES, CHAT_MODE_MAP, type ChatModeId } from "@shared/modes";
+
+/**
+ * Mode whitelists per context.
+ * - Standalone "对话" page: every built-in mode EXCEPT Agent. Agent is
+ *   intentionally project-only because its prompt assumes a project root /
+ *   workspace context.
+ * - Project landing & project chat: ONLY Agent. Users opted into a project so
+ *   we lock the mode to the one that knows how to operate on one. Future
+ *   project-flavoured modes can be added here.
+ */
+const STANDALONE_CHAT_MODE_IDS = CHAT_MODES
+  .filter((m) => m.id !== "agent")
+  .map((m) => m.id) as readonly ChatModeId[];
+const PROJECT_CHAT_MODE_IDS = ["agent"] as const satisfies readonly ChatModeId[];
 import { usePersistedState } from "./hooks/usePersistedState";
 import { backgroundClassMap, textClassMap } from "./constants/theme-tokens";
 import { AI_PROVIDERS_DEFAULT, type CustomProvider, type ProviderModel } from "./constants/providers";
-import { THINK_BUDGET_LABELS } from "./constants/think-presets";
+import { PROTOCOL_LEVELS, THINK_BUDGET_LABELS } from "./constants/think-presets";
 import { ThemeModal } from "./components/modals/ThemeModal";
+import { PermissionApprovalModal, type PermissionRequest, type PermissionDecisionKind } from "./components/modals/PermissionApprovalModal";
+import { RunningTasksTray } from "./components/RunningTasksTray";
+import { ResumeToast } from "./components/ResumeToast";
 import { AddProviderModal } from "./components/modals/AddProviderModal";
 import { ThinkConfigModal } from "./components/modals/ThinkConfigModal";
 import { AddModelModal } from "./components/modals/AddModelModal";
+import { CapabilityChips } from "./components/CapabilityChips";
+
+/**
+ * True if the model exposes any form of reasoning/thinking. v4 derives this
+ * from the multi-label `capabilities` set instead of a dedicated `think`
+ * flag — the catalog literal-types `capabilities` so callers don't need an
+ * explicit `null` check.
+ */
+function hasReasoning(m: ProviderModel | undefined): boolean {
+  return !!m && m.capabilities.includes("reasoning");
+}
+
+/**
+ * Levels available for the model's reasoning protocol. Returns `[]` for
+ * non-reasoning models *and* for binary protocols (DeepSeek-R1 etc.) — the
+ * binary case is handled by callers with a plain on/off toggle.
+ */
+function modelLevels(m: ProviderModel | undefined): ThinkBudget[] {
+  if (!m || !m.thinkProtocol) return [];
+  return PROTOCOL_LEVELS[m.thinkProtocol];
+}
 
 function ModelConfigPage() {
   const { t } = useTranslation();
@@ -38,8 +87,21 @@ function ModelConfigPage() {
   const [customModels, setCustomModels] = useState<Record<string, ProviderModel[]>>({});
 
   const allProviders = [...AI_PROVIDERS_DEFAULT, ...customProviders.map((c) => ({ id: c.id, name: c.name, baseUrl: c.baseUrl, models: [] as ProviderModel[] }))];
+  // Localized display name for built-in providers (custom providers fall back
+  // to their stored raw name via i18next's defaultValue).
+  const localizedName = useCallback(
+    (p: { id: string; name: string }) => t(`providers.${p.id}`, { defaultValue: p.name }),
+    [t]
+  );
   const filteredProviders = providerSearch
-    ? allProviders.filter((p) => p.name.toLowerCase().includes(providerSearch.toLowerCase()) || p.id.toLowerCase().includes(providerSearch.toLowerCase()))
+    ? allProviders.filter((p) => {
+        const q = providerSearch.toLowerCase();
+        return (
+          localizedName(p).toLowerCase().includes(q) ||
+          p.name.toLowerCase().includes(q) ||
+          p.id.toLowerCase().includes(q)
+        );
+      })
     : allProviders;
   const provider = allProviders.find((p) => p.id === selectedProvider) ?? allProviders[0];
 
@@ -76,21 +138,29 @@ function ModelConfigPage() {
       const grouped: Record<string, ProviderModel[]> = {};
       for (const m of models) {
         if (!grouped[m.providerId]) grouped[m.providerId] = [];
-        grouped[m.providerId].push({
-          id: m.modelId,
-          think: m.supportsThink || undefined,
-          thinkLevels: m.thinkLevels as ThinkBudget[] | undefined
-        });
+        // Tolerate v3 rows: if the row still has the legacy `supportsThink`
+        // flag with no `capabilities`, synthesise a minimal capability set.
+        const capabilities: ModelCapability[] = (m.capabilities && m.capabilities.length > 0)
+          ? m.capabilities
+          : (m.supportsThink ? ["text", "reasoning"] : ["text"]);
+        const thinkProtocol: ThinkProtocol | undefined = m.thinkProtocol ?? undefined;
+        grouped[m.providerId].push({ id: m.modelId, capabilities, thinkProtocol });
       }
       setCustomModels(grouped);
     });
   }, []);
 
   useEffect(() => {
-    // Init models in DB and load configs
+    // Init models in DB and load configs. Pass through capabilities +
+    // thinkProtocol so first-time seeded rows get the catalog defaults
+    // (replacing the old `string[]` model-id list).
     if (!window.electronAPI?.bulkInitModels) return;
-    const ids = provider.models.map((m) => m.id);
-    void window.electronAPI.bulkInitModels(provider.id, ids).then(setModelConfigs);
+    const seedModels = provider.models.map((m) => ({
+      id: m.id,
+      capabilities: m.capabilities,
+      thinkProtocol: m.thinkProtocol ?? null
+    }));
+    void window.electronAPI.bulkInitModels(provider.id, seedModels).then(setModelConfigs);
     if (provider.models.length > 0) {
       setConnectModel(provider.models[0].id);
     }
@@ -188,9 +258,24 @@ function ModelConfigPage() {
   async function toggleModel(modelId: string) {
     if (!window.electronAPI?.saveModelConfig) return;
     const existing = modelConfigs.find((c) => c.modelId === modelId);
+    // When creating a placeholder ModelConfig for a model we haven't touched
+    // yet, look up the catalog entry so capabilities + protocol stay correct.
+    const catalogEntry = provider.models.find((m) => m.id === modelId)
+      ?? (customModels[provider.id] || []).find((m) => m.id === modelId);
     const config: ModelConfig = existing
       ? { ...existing, enabled: !existing.enabled }
-      : { providerId: provider.id, modelId, enabled: false, thinkEnabled: false, thinkBudget: "medium", thinkBodyOn: "{}", thinkBodyOff: "", forceTemperature: "" };
+      : {
+          providerId: provider.id,
+          modelId,
+          enabled: false,
+          capabilities: catalogEntry?.capabilities ?? ["text"],
+          thinkProtocol: catalogEntry?.thinkProtocol ?? null,
+          thinkEnabled: false,
+          thinkBudget: "medium",
+          thinkBodyOn: "{}",
+          thinkBodyOff: "",
+          forceTemperature: ""
+        };
     const updated = await window.electronAPI.saveModelConfig(config);
     setModelConfigs(updated);
   }
@@ -198,7 +283,10 @@ function ModelConfigPage() {
   async function handleEnableAll() {
     if (!window.electronAPI?.setAllModelsEnabled) return;
     if (window.electronAPI.bulkInitModels) {
-      await window.electronAPI.bulkInitModels(provider.id, provider.models.map((m) => m.id));
+      await window.electronAPI.bulkInitModels(
+        provider.id,
+        provider.models.map((m) => ({ id: m.id, capabilities: m.capabilities, thinkProtocol: m.thinkProtocol ?? null }))
+      );
     }
     const updated = await window.electronAPI.setAllModelsEnabled(provider.id, true);
     setModelConfigs(updated);
@@ -250,21 +338,45 @@ function ModelConfigPage() {
     return merged;
   }, [provider.models, provider.id, customModels]);
 
-  const filteredModelsDisplay = modelSearch
-    ? allModelsForProvider.filter((m) => m.id.toLowerCase().includes(modelSearch.toLowerCase()))
-    : allModelsForProvider;
+  /**
+   * `modelSearch` doubles as a free-text id filter AND a capability filter:
+   *   - typing `vision`/`reasoning`/`tools`/... narrows to models with that
+   *     capability (intentional shortcut so the user doesn't need a separate
+   *     dropdown)
+   *   - any other text falls back to a substring match on the model id
+   * Empty input shows the full list.
+   */
+  const filteredModelsDisplay = useMemo(() => {
+    const q = modelSearch.trim().toLowerCase();
+    if (!q) return allModelsForProvider;
+    const CAP_KEYWORDS: ModelCapability[] = [
+      "text", "vision", "reasoning", "tools", "image-gen", "audio", "embedding"
+    ];
+    const capMatch = CAP_KEYWORDS.find((c) => c === q);
+    if (capMatch) return allModelsForProvider.filter((m) => m.capabilities.includes(capMatch));
+    return allModelsForProvider.filter((m) => m.id.toLowerCase().includes(q));
+  }, [modelSearch, allModelsForProvider]);
 
-  function handleAddModel(modelId: string, think: boolean, thinkLevels?: ThinkBudget[]) {
-    // Persist to DB
+  function handleAddModel(
+    modelId: string,
+    capabilities: ModelCapability[],
+    thinkProtocol: ThinkProtocol | null
+  ) {
     if (window.electronAPI?.addCustomModel) {
-      void window.electronAPI.addCustomModel(provider.id, modelId, think, thinkLevels);
+      void window.electronAPI.addCustomModel(provider.id, modelId, capabilities, thinkProtocol);
     }
     setCustomModels((prev) => {
       const existing = prev[provider.id] || [];
       if (existing.some((m) => m.id === modelId) || provider.models.some((m) => m.id === modelId)) {
         return prev;
       }
-      return { ...prev, [provider.id]: [...existing, { id: modelId, think: think || undefined, thinkLevels }] };
+      return {
+        ...prev,
+        [provider.id]: [
+          ...existing,
+          { id: modelId, capabilities, thinkProtocol: thinkProtocol ?? undefined }
+        ]
+      };
     });
   }
 
@@ -307,9 +419,9 @@ function ModelConfigPage() {
               onClick={() => setSelectedProvider(p.id)}
             >
               <span className="inline-flex h-5 w-5 flex-shrink-0 items-center justify-center">
-                {PROVIDER_ICON_MAP[p.id] ? (() => { const Icon = PROVIDER_ICON_MAP[p.id]; return <Icon size={18} />; })() : <span className="flex h-5 w-5 items-center justify-center rounded-md bg-white/[0.08] text-[10px] font-bold text-[var(--lp-text)]">{p.name[0]}</span>}
+                {PROVIDER_ICON_MAP[p.id] ? (() => { const Icon = PROVIDER_ICON_MAP[p.id]; return <Icon size={18} />; })() : <span className="flex h-5 w-5 items-center justify-center rounded-md bg-white/[0.08] text-[10px] font-bold text-[var(--lp-text)]">{localizedName(p)[0]}</span>}
               </span>
-              <span className="truncate">{p.name}</span>
+              <span className="truncate">{localizedName(p)}</span>
             </button>
           ))}
         </div>
@@ -328,9 +440,9 @@ function ModelConfigPage() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="inline-flex h-7 w-7 items-center justify-center">
-              {PROVIDER_ICON_MAP[provider.id] ? (() => { const Icon = PROVIDER_ICON_MAP[provider.id]; return <Icon size={26} />; })() : <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.08] text-[13px] font-bold text-[var(--lp-text)]">{provider.name[0]}</span>}
+              {PROVIDER_ICON_MAP[provider.id] ? (() => { const Icon = PROVIDER_ICON_MAP[provider.id]; return <Icon size={26} />; })() : <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-white/[0.08] text-[13px] font-bold text-[var(--lp-text)]">{localizedName(provider)[0]}</span>}
             </span>
-            <div className="text-[20px] font-semibold text-[var(--lp-text)]">{provider.name}</div>
+            <div className="text-[20px] font-semibold text-[var(--lp-text)]">{localizedName(provider)}</div>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-[12px] text-[var(--lp-soft-text)]">{t("modelConfig.openaiCompat")}</span>
@@ -516,15 +628,16 @@ function ModelConfigPage() {
               {filteredModelsDisplay.map((m) => {
                 const enabled = getModelEnabled(m.id);
                 const isCustomModel = (customModels[provider.id] || []).some((cm) => cm.id === m.id);
+                const canReason = hasReasoning(m);
                 return (
                   <div key={m.id} className="flex items-center justify-between rounded-lg px-3 py-2 hover:bg-white/[0.03]">
-                    <span className="flex items-center gap-2 text-[13px] text-[var(--lp-text)]">
-                      {m.id}
-                      {m.think ? <span className="rounded bg-purple-500/20 px-1.5 py-0.5 text-[10px] font-medium text-purple-300">Think</span> : null}
+                    <span className="flex min-w-0 flex-1 items-center gap-2 text-[13px] text-[var(--lp-text)]">
+                      <span className="truncate">{m.id}</span>
+                      <CapabilityChips capabilities={m.capabilities} />
                       {isCustomModel ? <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-[10px] font-medium text-blue-300">{t("modelConfig.customBadge")}</span> : null}
                     </span>
                     <div className="flex items-center gap-2">
-                      {m.think ? (
+                      {canReason ? (
                         <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md text-[14px] text-[var(--lp-soft-text)] hover:bg-white/[0.06]" title={t("modelConfig.configThink")} onClick={() => setThinkModalModel(m.id)}>⚙</button>
                       ) : null}
                       {isCustomModel ? (
@@ -580,16 +693,20 @@ function ModelConfigPage() {
         />
       ) : null}
 
-      {thinkModalModel ? (
-        <ThinkConfigModal
-          modelId={thinkModalModel}
-          providerId={provider.id}
-          thinkLevels={allModelsForProvider.find((m) => m.id === thinkModalModel)?.thinkLevels}
-          config={modelConfigs.find((c) => c.modelId === thinkModalModel)}
-          onClose={() => setThinkModalModel(null)}
-          onSave={(c) => void handleSaveThinkConfig(c)}
-        />
-      ) : null}
+      {thinkModalModel ? (() => {
+        const target = allModelsForProvider.find((m) => m.id === thinkModalModel);
+        return (
+          <ThinkConfigModal
+            modelId={thinkModalModel}
+            providerId={provider.id}
+            thinkProtocol={target?.thinkProtocol ?? null}
+            capabilities={target?.capabilities ?? ["text"]}
+            config={modelConfigs.find((c) => c.modelId === thinkModalModel)}
+            onClose={() => setThinkModalModel(null)}
+            onSave={(c) => void handleSaveThinkConfig(c)}
+          />
+        );
+      })() : null}
 
       {addModelModalOpen ? (
         <AddModelModal
@@ -652,26 +769,43 @@ function useAnchoredDropdown(open: boolean) {
  */
 function ModeSelector({
   selectedModeId,
-  onChange
+  onChange,
+  availableModeIds
 }: {
   selectedModeId: ChatModeId;
   onChange: (id: ChatModeId) => void;
+  /**
+   * Optional whitelist of mode ids that should appear in the dropdown.
+   * - Standalone chat passes the 8 non-agent modes (Agent is project-only).
+   * - Project context passes ["agent"] so users can't switch mode away from
+   *   Agent inside a project (UX choice, not a hard constraint).
+   * Default = render every registered mode.
+   */
+  availableModeIds?: readonly ChatModeId[];
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const { anchorRef, coords } = useAnchoredDropdown(open);
   const active = CHAT_MODE_MAP[selectedModeId] ?? CHAT_MODE_MAP.chat;
+  const visibleModes = availableModeIds
+    ? CHAT_MODES.filter((m) => availableModeIds.includes(m.id))
+    : CHAT_MODES;
 
-  // Each accent maps to a small bg/text/border tint class set.
+  // Each accent maps to a small bg/border tint class set. We intentionally
+  // do NOT pin a foreground colour here — the button label always uses the
+  // user-chosen ink color (`var(--lp-text)`) so every mode button stays
+  // visually consistent with the rest of the chrome, regardless of theme.
+  // The accent only paints the surrounding glass (border + tinted fill).
   const accentTints: Record<string, { btn: string; ring: string; chip: string }> = {
-    slate:    { btn: "border-slate-400/30 bg-slate-400/10 text-slate-200",    ring: "ring-slate-400/40",    chip: "bg-slate-400/15 text-slate-200" },
-    amber:    { btn: "border-amber-400/40 bg-amber-400/15 text-amber-200",    ring: "ring-amber-400/40",    chip: "bg-amber-400/20 text-amber-100" },
-    emerald:  { btn: "border-emerald-400/40 bg-emerald-400/15 text-emerald-200", ring: "ring-emerald-400/40", chip: "bg-emerald-400/20 text-emerald-100" },
-    sky:      { btn: "border-sky-400/40 bg-sky-400/15 text-sky-200",          ring: "ring-sky-400/40",      chip: "bg-sky-400/20 text-sky-100" },
-    violet:   { btn: "border-violet-400/40 bg-violet-400/15 text-violet-200", ring: "ring-violet-400/40",   chip: "bg-violet-400/20 text-violet-100" },
-    rose:     { btn: "border-rose-400/40 bg-rose-400/15 text-rose-200",       ring: "ring-rose-400/40",     chip: "bg-rose-400/20 text-rose-100" },
-    cyan:     { btn: "border-cyan-400/40 bg-cyan-400/15 text-cyan-200",       ring: "ring-cyan-400/40",     chip: "bg-cyan-400/20 text-cyan-100" },
-    fuchsia:  { btn: "border-fuchsia-400/40 bg-fuchsia-400/15 text-fuchsia-200", ring: "ring-fuchsia-400/40", chip: "bg-fuchsia-400/20 text-fuchsia-100" }
+    slate:    { btn: "border-slate-400/30 bg-slate-400/10",    ring: "ring-slate-400/40",    chip: "bg-slate-400/15" },
+    amber:    { btn: "border-amber-400/40 bg-amber-400/15",    ring: "ring-amber-400/40",    chip: "bg-amber-400/20" },
+    emerald:  { btn: "border-emerald-400/40 bg-emerald-400/15", ring: "ring-emerald-400/40", chip: "bg-emerald-400/20" },
+    sky:      { btn: "border-sky-400/40 bg-sky-400/15",        ring: "ring-sky-400/40",      chip: "bg-sky-400/20" },
+    violet:   { btn: "border-violet-400/40 bg-violet-400/15",  ring: "ring-violet-400/40",   chip: "bg-violet-400/20" },
+    rose:     { btn: "border-rose-400/40 bg-rose-400/15",      ring: "ring-rose-400/40",     chip: "bg-rose-400/20" },
+    cyan:     { btn: "border-cyan-400/40 bg-cyan-400/15",      ring: "ring-cyan-400/40",     chip: "bg-cyan-400/20" },
+    fuchsia:  { btn: "border-fuchsia-400/40 bg-fuchsia-400/15", ring: "ring-fuchsia-400/40", chip: "bg-fuchsia-400/20" },
+    indigo:   { btn: "border-indigo-400/40 bg-indigo-400/15",  ring: "ring-indigo-400/40",   chip: "bg-indigo-400/20" }
   };
   const tint = accentTints[active.accent] ?? accentTints.slate;
 
@@ -681,33 +815,33 @@ function ModeSelector({
         ref={anchorRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] transition ${tint.btn} hover:brightness-110`}
+        className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] text-[var(--lp-text)] transition ${tint.btn} hover:brightness-110`}
         title={t(active.descKey)}
       >
         <span className="text-[14px] leading-none">{active.icon}</span>
         <span className="font-medium">{t(active.nameKey)}</span>
-        <span className="text-current opacity-60">▾</span>
+        <span className="opacity-60">▾</span>
       </button>
 
       {open ? createPortal(
         <>
           <div className="fixed inset-0 z-[200]" onClick={() => setOpen(false)} />
           <div
-            className="fixed z-[210] w-[320px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
+            className="lp-popover fixed z-[210] w-[320px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
             style={{ left: coords.left, bottom: coords.bottom }}
           >
-            <div className="border-b border-white/[0.06] px-4 py-2.5 text-[11px] uppercase tracking-wide text-[var(--lp-soft-text)]">
+            <div className="border-b border-white/[0.06] px-4 py-2.5 text-[11px] uppercase tracking-wide text-[var(--lp-muted)]">
               {t("modes.dropdownTitle")}
             </div>
             <div className="max-h-[420px] overflow-y-auto px-2 py-2">
-              {CHAT_MODES.map((mode) => {
+              {visibleModes.map((mode) => {
                 const isActive = mode.id === selectedModeId;
                 const mt = accentTints[mode.accent] ?? accentTints.slate;
                 return (
                   <button
                     key={mode.id}
                     type="button"
-                    className={`mb-1 flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition ${
+                    className={`mb-1 flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition text-[var(--lp-text)] ${
                       isActive
                         ? `${mt.chip} ring-1 ${mt.ring}`
                         : "hover:bg-white/[0.04]"
@@ -717,12 +851,12 @@ function ModeSelector({
                     <span className="mt-0.5 text-[18px] leading-none">{mode.icon}</span>
                     <span className="flex-1 min-w-0">
                       <span className="flex items-center gap-1.5">
-                        <span className={`text-[13px] font-medium ${isActive ? "" : "text-[var(--lp-text)]"}`}>
+                        <span className="text-[13px] font-medium">
                           {t(mode.nameKey)}
                         </span>
                         {isActive ? <span className="text-[10px] opacity-70">●</span> : null}
                       </span>
-                      <span className={`mt-0.5 block text-[11.5px] leading-snug ${isActive ? "opacity-90" : "text-[var(--lp-soft-text)]"}`}>
+                      <span className={`mt-0.5 block text-[11.5px] leading-snug ${isActive ? "opacity-90" : "text-[var(--lp-muted)]"}`}>
                         {t(mode.descKey)}
                       </span>
                     </span>
@@ -730,7 +864,7 @@ function ModeSelector({
                 );
               })}
             </div>
-            <div className="border-t border-white/[0.06] px-4 py-2 text-[10.5px] text-[var(--lp-soft-text)]">
+            <div className="border-t border-white/[0.06] px-4 py-2 text-[10.5px] text-[var(--lp-muted)]">
               {t("modes.footerHint")}
             </div>
           </div>
@@ -745,17 +879,23 @@ function ModelSelector({
   selectedProvider,
   selectedModel,
   thinkBudget,
+  thinkEnabled,
   onChangeProvider,
   onChangeModel,
   onChangeBudget,
+  onChangeThinkEnabled,
   providerConfigs
 }: {
   selectedProvider: string;
   selectedModel: string;
   thinkBudget: ThinkBudget;
+  /** Whether the next message should request reasoning. Drives the budget
+   *  chip on the model button and the "关闭/Off" item in the budget picker. */
+  thinkEnabled: boolean;
   onChangeProvider: (id: string) => void;
   onChangeModel: (id: string) => void;
   onChangeBudget: (b: ThinkBudget) => void;
+  onChangeThinkEnabled: (next: boolean) => void;
   /** Provider configs from DB; used to filter out disabled / unkeyed providers. */
   providerConfigs?: Record<string, ProviderConfig>;
 }) {
@@ -764,6 +904,12 @@ function ModelSelector({
   const [modelOpen, setModelOpen] = useState(false);
   const providerAnchor = useAnchoredDropdown(providerOpen);
   const modelAnchor = useAnchoredDropdown(modelOpen);
+  // Localized display name for built-in providers; custom providers fall back
+  // to their stored raw name via i18next's defaultValue.
+  const localizedName = useCallback(
+    (p: { id: string; name: string }) => t(`providers.${p.id}`, { defaultValue: p.name }),
+    [t]
+  );
 
   // Filter to providers that are enabled AND have an apiKey set.
   // Falls back to all defaults when no configs are loaded yet (first render).
@@ -786,12 +932,20 @@ function ModelSelector({
   function selectProvider(id: string) {
     onChangeProvider(id);
     const next = availableProviders.find((p) => p.id === id) ?? AI_PROVIDERS_DEFAULT.find((p) => p.id === id);
-    if (next && next.models.length > 0) onChangeModel(next.models[0].id);
+    if (next && next.models.length > 0) {
+      const firstModel = next.models[0];
+      onChangeModel(firstModel.id);
+      // If the newly-selected model can't reason, force-off the toggle so we
+      // don't ship a stray reasoning_effort to a non-reasoning model.
+      if (!hasReasoning(firstModel) && thinkEnabled) onChangeThinkEnabled(false);
+    }
     setProviderOpen(false);
   }
 
   function selectModel(id: string) {
     onChangeModel(id);
+    const next = provider.models.find((m) => m.id === id);
+    if (next && !hasReasoning(next) && thinkEnabled) onChangeThinkEnabled(false);
     setModelOpen(false);
   }
 
@@ -801,16 +955,16 @@ function ModelSelector({
       <button
         ref={providerAnchor.anchorRef}
         type="button"
-        className="flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] bg-white/[0.03] px-3 py-1.5 text-[13px] text-[var(--lp-text)]/88 hover:bg-white/[0.06]"
+        className="flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] bg-white/[0.03] px-3 py-1.5 text-[13px] text-[var(--lp-text)] hover:bg-white/[0.06]"
         onClick={() => { setProviderOpen((v) => !v); setModelOpen(false); }}
         title={t("modelSelector.selectProvider")}
       >
         <span className="inline-flex h-4 w-4 items-center justify-center">
           {PROVIDER_ICON_MAP[provider.id]
             ? (() => { const Icon = PROVIDER_ICON_MAP[provider.id]; return <Icon size={14} />; })()
-            : <span className="text-[10px]">{provider.name[0]}</span>}
+            : <span className="text-[10px]">{localizedName(provider)[0]}</span>}
         </span>
-        <span className="max-w-[120px] truncate">{provider.name}</span>
+        <span className="max-w-[120px] truncate">{localizedName(provider)}</span>
         <span className="text-[var(--lp-soft-text)]">▾</span>
       </button>
 
@@ -818,29 +972,29 @@ function ModelSelector({
         <>
           <div className="fixed inset-0 z-[200]" onClick={() => setProviderOpen(false)} />
           <div
-            className="fixed z-[210] w-[240px] max-h-[360px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
+            className="lp-popover fixed z-[210] w-[240px] max-h-[360px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
             style={{ left: providerAnchor.coords.left, bottom: providerAnchor.coords.bottom }}
           >
-            <div className="border-b border-white/[0.06] px-3 py-2 text-[11px] text-[var(--lp-soft-text)]">{t("modelSelector.providerHeading")}</div>
+            <div className="border-b border-white/[0.06] px-3 py-2 text-[11px] text-[var(--lp-muted)]">{t("modelSelector.providerHeading")}</div>
             <div className="max-h-[300px] overflow-y-auto px-2 py-2">
               {noAvailable ? (
-                <div className="p-3 text-center text-[12px] text-[var(--lp-soft-text)]">
+                <div className="p-3 text-center text-[12px] text-[var(--lp-muted)]">
                   {t("modelSelector.noProvidersGoConfig")}
                 </div>
               ) : availableProviders.map((p) => (
                 <button
                   key={p.id}
                   type="button"
-                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] transition ${selectedProvider === p.id ? "bg-white/[0.08] text-[var(--lp-text)]" : "text-[var(--lp-text)]/78 hover:bg-white/[0.04]"}`}
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] text-[var(--lp-text)] transition ${selectedProvider === p.id ? "bg-white/[0.08]" : "hover:bg-white/[0.04]"}`}
                   onClick={() => selectProvider(p.id)}
                 >
                   <span className="flex items-center gap-2">
                     <span className="inline-flex h-4 w-4 items-center justify-center">
                       {PROVIDER_ICON_MAP[p.id]
                         ? (() => { const Icon = PROVIDER_ICON_MAP[p.id]; return <Icon size={14} />; })()
-                        : <span className="text-[10px]">{p.name[0]}</span>}
+                        : <span className="text-[10px]">{localizedName(p)[0]}</span>}
                     </span>
-                    <span className="truncate">{p.name}</span>
+                    <span className="truncate">{localizedName(p)}</span>
                   </span>
                   {selectedProvider === p.id ? <span className="text-[#10A37F]">✓</span> : null}
                 </button>
@@ -855,16 +1009,22 @@ function ModelSelector({
       <button
         ref={modelAnchor.anchorRef}
         type="button"
-        className="flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] bg-white/[0.03] px-3 py-1.5 text-[13px] text-[var(--lp-text)]/88 hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
+        className="flex items-center gap-1.5 rounded-full border border-[var(--lp-border)] bg-white/[0.03] px-3 py-1.5 text-[13px] text-[var(--lp-text)] hover:bg-white/[0.06] disabled:cursor-not-allowed disabled:opacity-50"
         onClick={() => { setModelOpen((v) => !v); setProviderOpen(false); }}
         disabled={provider.models.length === 0}
         title={t("modelSelector.selectModel")}
       >
         <span className="max-w-[160px] truncate">{modelDisplay}</span>
-        {model?.think ? (
-          <span className="rounded bg-purple-500/20 px-1 py-0.5 text-[9px] font-medium text-purple-300">
-            {model.thinkLevels && model.thinkLevels.length > 0 ? THINK_BUDGET_LABELS[thinkBudget] : "Think"}
-          </span>
+        {hasReasoning(model) ? (
+          thinkEnabled ? (
+            <span className="lp-think-chip rounded px-1 py-0.5 text-[9px] font-medium">
+              {modelLevels(model).length > 0 ? THINK_BUDGET_LABELS[thinkBudget] : "Think"}
+            </span>
+          ) : (
+            <span className="rounded border border-[var(--lp-border)] px-1 py-0.5 text-[9px] font-medium text-[var(--lp-soft-text)]">
+              {t("modelSelector.thinkChipOff")}
+            </span>
+          )
         ) : null}
         <span className="text-[var(--lp-soft-text)]">▾</span>
       </button>
@@ -873,49 +1033,89 @@ function ModelSelector({
         <>
           <div className="fixed inset-0 z-[200]" onClick={() => setModelOpen(false)} />
           <div
-            className="fixed z-[210] w-[280px] max-h-[420px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
+            className="lp-popover fixed z-[210] w-[280px] max-h-[420px] overflow-hidden rounded-[16px] border border-[var(--lp-border)] bg-[var(--lp-main-bg)] shadow-[0_16px_48px_rgba(0,0,0,0.4)] backdrop-blur-2xl"
             style={{ left: modelAnchor.coords.left, bottom: modelAnchor.coords.bottom }}
           >
             <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2 text-[11px]">
-              <span className="text-[var(--lp-soft-text)]">{t("modelSelector.modelHeading")}</span>
-              <span className="text-[var(--lp-soft-text)]">{t("modelSelector.fromProvider", { name: provider.name })}</span>
+              <span className="text-[var(--lp-muted)]">{t("modelSelector.modelHeading")}</span>
+              <span className="text-[var(--lp-muted)]">{t("modelSelector.fromProvider", { name: localizedName(provider) })}</span>
             </div>
             <div className="max-h-[300px] overflow-y-auto px-2 py-2">
               {provider.models.length === 0 ? (
-                <div className="p-3 text-center text-[12px] text-[var(--lp-soft-text)]">
+                <div className="p-3 text-center text-[12px] text-[var(--lp-muted)]">
                   {t("modelSelector.noModelsGoConfig")}
                 </div>
               ) : provider.models.map((m) => (
                 <button
                   key={m.id}
                   type="button"
-                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] transition ${selectedModel === m.id ? "bg-white/[0.08] text-[var(--lp-text)]" : "text-[var(--lp-text)]/78 hover:bg-white/[0.04]"}`}
+                  className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[13px] text-[var(--lp-text)] transition ${selectedModel === m.id ? "bg-white/[0.08]" : "hover:bg-white/[0.04]"}`}
                   onClick={() => selectModel(m.id)}
                 >
-                  <span className="flex items-center gap-2">
+                  <span className="flex min-w-0 items-center gap-2">
                     <span className="truncate">{m.id}</span>
-                    {m.think ? <span className="rounded bg-purple-500/20 px-1 py-0.5 text-[9px] font-medium text-purple-300">Think</span> : null}
+                    <CapabilityChips capabilities={m.capabilities} size="sm" />
                   </span>
                   {selectedModel === m.id ? <span className="text-[#10A37F]">✓</span> : null}
                 </button>
               ))}
             </div>
 
-            {/* Think budget selector — only when the current model exposes granular levels */}
-            {model?.think && model.thinkLevels && model.thinkLevels.length > 0 ? (
+            {/* Think budget selector */}
+            {/*
+              Two layouts here:
+                1. Model with granular levels  → render each level + an "Off"
+                   chip. Picking a level sets thinkBudget AND toggles
+                   thinkEnabled=true (otherwise the adapter would never ship
+                   `reasoning_effort` for /chat/completions); picking Off
+                   sets thinkEnabled=false.
+                2. Model with `think: true` but no levels (binary models like
+                   DeepSeek-R1 / Kimi-thinking / GLM)  → render an On/Off
+                   toggle which only flips thinkEnabled.
+            */}
+            {hasReasoning(model) && modelLevels(model).length > 0 ? (
               <div className="border-t border-white/[0.06] px-3 py-2.5">
-                <div className="mb-1.5 text-[11px] text-[var(--lp-soft-text)]">{t("modelSelector.reasoningEffort")}</div>
+                <div className="mb-1.5 text-[11px] text-[var(--lp-muted)]">{t("modelSelector.reasoningEffort")}</div>
                 <div className="flex flex-wrap gap-1.5">
-                  {model.thinkLevels.map((b) => (
-                    <button
-                      key={b}
-                      type="button"
-                      className={`rounded-md border px-2 py-1 text-[11px] transition ${thinkBudget === b ? "border-[#10A37F] bg-[#10A37F]/10 text-[#10A37F]" : "border-[var(--lp-border)] text-[var(--lp-text)]/70 hover:bg-white/[0.04]"}`}
-                      onClick={() => { onChangeBudget(b); setModelOpen(false); }}
-                    >
-                      {THINK_BUDGET_LABELS[b]}
-                    </button>
-                  ))}
+                  {modelLevels(model).map((b) => {
+                    const active = thinkEnabled && thinkBudget === b;
+                    return (
+                      <button
+                        key={b}
+                        type="button"
+                        className={`rounded-md border px-2 py-1 text-[11px] text-[var(--lp-text)] transition ${active ? "border-[#10A37F] bg-[#10A37F]/10 text-[#10A37F]" : "border-[var(--lp-border)] hover:bg-white/[0.04]"}`}
+                        onClick={() => {
+                          onChangeBudget(b);
+                          if (!thinkEnabled) onChangeThinkEnabled(true);
+                          setModelOpen(false);
+                        }}
+                      >
+                        {THINK_BUDGET_LABELS[b]}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className={`rounded-md border px-2 py-1 text-[11px] transition ${!thinkEnabled ? "border-red-400/60 bg-red-400/10 text-red-300" : "border-[var(--lp-border)] text-[var(--lp-text)] hover:bg-white/[0.04]"}`}
+                    onClick={() => { onChangeThinkEnabled(false); setModelOpen(false); }}
+                  >
+                    {t("modelSelector.reasoningOff")}
+                  </button>
+                </div>
+              </div>
+            ) : hasReasoning(model) ? (
+              <div className="border-t border-white/[0.06] px-3 py-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="text-[11px] text-[var(--lp-muted)]">{t("modelSelector.thinkToggleLabel")}</div>
+                  <button
+                    type="button"
+                    className={`h-5 w-9 rounded-full transition ${thinkEnabled ? "bg-[#10A37F]" : "bg-white/10"}`}
+                    onClick={() => onChangeThinkEnabled(!thinkEnabled)}
+                    aria-pressed={thinkEnabled}
+                    title={thinkEnabled ? t("modelSelector.thinkToggleOn") : t("modelSelector.thinkToggleOff")}
+                  >
+                    <div className={`h-4 w-4 rounded-full bg-white shadow transition ${thinkEnabled ? "translate-x-[18px]" : "translate-x-[2px]"}`} />
+                  </button>
                 </div>
               </div>
             ) : null}
@@ -942,18 +1142,72 @@ export function App() {
     setLanguage
   } = useUiStore();
   const [themeModalOpen, setThemeModalOpen] = useState(false);
+  // FIFO queue of pending tool-permission requests emitted by the agent
+  // runtime over `agent:run:{runId}`. The modal renders the front of the
+  // queue; when the user decides, we forward the answer to the main
+  // process and dequeue. Cleared on every run terminate.
+  const [permissionQueue, setPermissionQueue] = useState<PermissionRequest[]>([]);
+  const decidePermission = useCallback((req: PermissionRequest, decision: PermissionDecisionKind) => {
+    void window.electronAPI?.answerAgentPermission?.({
+      runId: req.runId,
+      toolCallId: req.toolCallId,
+      decision
+    });
+    setPermissionQueue((prev) => prev.filter((p) => p.toolCallId !== req.toolCallId));
+  }, []);
+  const denyAllPermissions = useCallback(() => {
+    setPermissionQueue((prev) => {
+      for (const req of prev) {
+        void window.electronAPI?.answerAgentPermission?.({
+          runId: req.runId,
+          toolCallId: req.toolCallId,
+          decision: "deny"
+        });
+      }
+      return [];
+    });
+  }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activePage, setActivePage] = usePersistedState<"chat" | "modelConfig">("app.activePage", "chat");
+  const [activePage, setActivePage] = usePersistedState<"chat" | "modelConfig" | "project">("app.activePage", "chat");
+  const [activeProject, setActiveProject] = useState<Project | null>(null);
+  /**
+   * When the user clicks an EMPTY conversation that sits under a project we
+   * still show the project landing page (per UX request), but we keep a
+   * handle to that conversation so the first message gets attached to it
+   * instead of creating a brand-new one. Cleared whenever we navigate away.
+   */
+  const [projectDraftConversation, setProjectDraftConversation] = useState<Conversation | null>(null);
   const [sidebarWidth, setSidebarWidth] = usePersistedState<number>("app.sidebarWidth", 280);
   const [conversationsOpen, setConversationsOpen] = usePersistedState<boolean>("sidebar.conversationsOpen", true);
   const [projectsOpen, setProjectsOpen] = usePersistedState<boolean>("sidebar.projectsOpen", true);
   const [chatProvider, setChatProvider] = usePersistedState<string>("chat.provider", AI_PROVIDERS_DEFAULT[0].id);
   const [chatModel, setChatModel] = usePersistedState<string>("chat.model", AI_PROVIDERS_DEFAULT[0].models[0].id);
   const [chatThinkBudget, setChatThinkBudget] = usePersistedState<ThinkBudget>("chat.thinkBudget", "medium");
+  /**
+   * Whether deep-thinking / reasoning is enabled for the next outgoing message.
+   * Default `true` so reasoning-capable models behave intuitively out of the
+   * box (otherwise `reasoning_effort` never ships, even when the user picks a
+   * level in the model selector — see the chat-completions adapter, which only
+   * appends `reasoning_effort` when `thinkEnabled` is true).
+   *
+   * The "active" value for any given send is `conversation.thinkEnabled` (if
+   * set on the conversation row) else this UI-level toggle.
+   */
+  const [chatThinkEnabled, setChatThinkEnabled] = usePersistedState<boolean>("chat.thinkEnabled", true);
   const [chatModeId, setChatModeId] = usePersistedState<ChatModeId>("chat.modeId", "chat");
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [providerCache, setProviderCache] = useState<Record<string, ProviderConfig>>({});
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  /**
+   * Conversations that don't live under any project — these are the ones
+   * the sidebar's "Conversations" (对话) section is meant to render.
+   * Project-bound conversations belong only under their project node;
+   * showing them in both places causes the "duplicate / mixed" bug.
+   */
+  const unattachedConversations = useMemo(
+    () => conversations.filter((c) => !c.projectId),
+    [conversations]
+  );
   const [conversationPreviews, setConversationPreviews] = useState<Record<string, { role: string; content: string; createdAt: number } | null>>({});
   const [projects, setProjects] = useState<Project[]>([]);
   /** Per-project expansion in the sidebar: when true, that project shows
@@ -978,6 +1232,9 @@ export function App() {
     status: "streaming" | "done" | "error";
     errorMessage?: string;
     startedAt: number;
+    /** When true the `streamId` is an agent runId — cancel via
+     *  `cancelAgentRun` instead of `cancelChatStream`. */
+    isAgentRun?: boolean;
   };
   const [activeStreams, setActiveStreams] = useState<Record<string, StreamState>>({});
   const activeStreamsRef = useRef(activeStreams);
@@ -1079,6 +1336,139 @@ export function App() {
     if (!providerInfo) return { ok: false, reason: "no-provider" };
     if (!providerInfo.apiKey) return { ok: false, reason: "no-key" };
 
+    // ── Agent runtime route ────────────────────────────────────────────
+    // Project conversations on the "agent" mode go through the new
+    // agent runtime (queryLoop + tools) instead of the plain chat
+    // stream. The runtime takes ownership of message persistence,
+    // tool-call execution, and permission prompts; the UI subscribes to
+    // a per-run channel and re-renders the conversation from
+    // `message_part` rows. v0 limitation: retries on agent runs simply
+    // re-send the last user text rather than reusing message ids.
+    if (
+      params.modeId === "agent" &&
+      params.conversation.projectId &&
+      api.startAgentRun &&
+      api.onAgentRun
+    ) {
+      const convId = params.conversation.id;
+      const userText = params.userText ?? "";
+      if (!userText.trim() && !params.attachments?.length) {
+        return { ok: false, reason: "send-failed", message: "empty message" };
+      }
+      const modelDef = AI_PROVIDERS_DEFAULT
+        .find((p) => p.id === params.providerId)?.models
+        .find((m) => m.id === params.modelId);
+      const thinkProtocol = modelDef?.thinkProtocol ?? null;
+      let started: { runId: string };
+      try {
+        started = await api.startAgentRun({
+          projectId: params.conversation.projectId,
+          conversationId: convId,
+          userMessage: userText,
+          providerId: params.providerId,
+          protocol: providerInfo.protocol,
+          baseUrl: providerInfo.baseUrl,
+          apiKey: providerInfo.apiKey,
+          model: params.modelId,
+          temperature: undefined,
+          thinkEnabled: params.thinkEnabled,
+          thinkBudget: params.thinkBudget,
+          thinkProtocol,
+          modeId: params.modeId,
+          language: i18n.language === "en" ? "en" : "zh-CN"
+        });
+      } catch (e) {
+        return { ok: false, reason: "send-failed", message: (e as Error).message };
+      }
+      setActiveStreams((prev) => ({
+        ...prev,
+        [convId]: {
+          // Reuse the existing live-stream shape so the ChatPanel
+          // header dot / cancel button work without changes.
+          streamId: started.runId,
+          assistantMessageId: "",
+          text: "",
+          reasoning: "",
+          status: "streaming",
+          startedAt: Date.now(),
+          isAgentRun: true
+        }
+      }));
+      const unsubscribe = api.onAgentRun(started.runId, (ev) => {
+        // Permission requests get pushed into the global queue; the
+        // PermissionApprovalModal renders the front element.
+        if (ev.kind === "permission_request") {
+          setPermissionQueue((prev) => {
+            // De-dup by toolCallId in case the main process re-emits.
+            if (prev.some((p) => p.toolCallId === ev.toolCallId)) return prev;
+            return [
+              ...prev,
+              {
+                runId: started.runId,
+                toolCallId: ev.toolCallId,
+                toolName: ev.toolName,
+                input: ev.input,
+                uiPreview: ev.uiPreview
+              }
+            ];
+          });
+        }
+        if (ev.kind === "terminal") {
+          // Drop any leftover permission requests tied to this run — the
+          // runtime auto-denies them on its side once the loop unwinds.
+          setPermissionQueue((prev) => prev.filter((p) => p.runId !== started.runId));
+        }
+        setActiveStreams((prev) => {
+          const cur = prev[convId];
+          if (!cur) return prev;
+          if (ev.kind === "llm") {
+            const e = ev.event;
+            if (e.type === "text_delta") {
+              return { ...prev, [convId]: { ...cur, text: cur.text + e.text } };
+            }
+            if (e.type === "reasoning_delta") {
+              return { ...prev, [convId]: { ...cur, reasoning: cur.reasoning + e.text } };
+            }
+            if (e.type === "error") {
+              return { ...prev, [convId]: { ...cur, status: "error", errorMessage: e.message } };
+            }
+          }
+          if (ev.kind === "terminal") {
+            return {
+              ...prev,
+              [convId]: {
+                ...cur,
+                status: ev.reason === "completed" ? "done" : "error",
+                errorMessage: ev.reason === "completed" ? undefined : ev.message ?? ev.reason
+              }
+            };
+          }
+          return prev;
+        });
+        if (ev.kind === "message_persisted") {
+          void refreshConversations();
+        }
+        if (ev.kind === "terminal") {
+          const dispose = streamUnsubsRef.current[convId];
+          if (dispose) {
+            dispose();
+            delete streamUnsubsRef.current[convId];
+          }
+          void refreshConversations();
+          setTimeout(() => {
+            setActiveStreams((prev) => {
+              const next = { ...prev };
+              delete next[convId];
+              return next;
+            });
+          }, 500);
+        }
+      });
+      streamUnsubsRef.current[convId] = unsubscribe;
+      void refreshConversations();
+      return { ok: true };
+    }
+
     // If this is a retry, drop the failed assistant row first so it's not
     // listed in context (and the UI bubble disappears immediately when we
     // refresh messages a few lines down).
@@ -1124,6 +1514,16 @@ export function App() {
       .filter((m) => (m.content ?? "").trim().length > 0 || (m.attachments && m.attachments.length > 0))
       .map((m) => ({ role: m.role, content: m.content, attachments: m.attachments }));
 
+    // Resolve the model's reasoning protocol from the catalog so the adapter
+    // can map thinkBudget → reasoning_effort / budget_tokens / thinkingBudget
+    // correctly. `null` (rather than `undefined`) is sent to the main process
+    // to mean "model has no reasoning at all" — distinct from "renderer didn't
+    // know yet" which legacy builds emit as `undefined`.
+    const modelDef = AI_PROVIDERS_DEFAULT
+      .find((p) => p.id === params.providerId)?.models
+      .find((m) => m.id === params.modelId);
+    const thinkProtocol = modelDef?.thinkProtocol ?? null;
+
     let started: { streamId: string };
     try {
       started = await api.startChatStream({
@@ -1135,6 +1535,7 @@ export function App() {
         messages: contextMessages,
         thinkEnabled: params.thinkEnabled,
         thinkBudget: params.thinkBudget,
+        thinkProtocol,
         conversationId: params.conversation.id,
         assistantMessageId: placeholderAssistant.id,
         modeId: params.modeId
@@ -1227,7 +1628,11 @@ export function App() {
   const cancelChatStream = useCallback((conversationId: string) => {
     const cur = activeStreamsRef.current[conversationId];
     if (!cur) return;
-    void window.electronAPI?.cancelChatStream?.(cur.streamId);
+    if (cur.isAgentRun) {
+      void window.electronAPI?.cancelAgentRun?.(cur.streamId);
+    } else {
+      void window.electronAPI?.cancelChatStream?.(cur.streamId);
+    }
     setActiveStreams((prev) => {
       const next = { ...prev };
       if (next[conversationId]) {
@@ -1256,35 +1661,69 @@ export function App() {
       providerId: conv.providerId ?? chatProvider,
       modelId: conv.modelId ?? chatModel,
       thinkBudget: (conv.thinkBudget as ThinkBudget) ?? chatThinkBudget,
-      thinkEnabled: !!conv.thinkEnabled,
+      // Fall back to the UI-level toggle for legacy rows where thinkEnabled
+      // was never set (older builds hard-coded `false` on every conversation
+      // create, so even reasoning models never shipped reasoning_effort).
+      thinkEnabled: conv.thinkEnabled ?? chatThinkEnabled,
       modeId: (conv.modeId as string) ?? chatModeId,
       retryFromAssistantId: params.failedAssistantId
     });
-  }, [startChatStream, chatProvider, chatModel, chatThinkBudget, chatModeId]);
+  }, [startChatStream, chatProvider, chatModel, chatThinkBudget, chatThinkEnabled, chatModeId]);
 
   useEffect(() => { void refreshConversations(); }, [refreshConversations]);
   useEffect(() => { void refreshProjects(); }, [refreshProjects]);
 
+  // After a reload, `activePage` is restored from localStorage but
+  // `activeProject` is not — if we land on the project page without a
+  // selected project we'd render nothing. Fall back to chat in that case.
+  useEffect(() => {
+    if (activePage === "project" && !activeProject) {
+      setActivePage("chat");
+    }
+  }, [activePage, activeProject, setActivePage]);
+
   const handleNewConversation = useCallback(async (projectId: string | null = null) => {
     const api = window.electronAPI;
     if (!api?.createConversation) return;
+    // Only seed thinkEnabled when the chosen model actually supports reasoning;
+    // otherwise we'd ship a stale `true` to a non-reasoning model (harmless on
+    // the wire because the adapter still wouldn't add `reasoning_effort`, but
+    // misleading in the UI).
+    const modelDef = AI_PROVIDERS_DEFAULT
+      .find((p) => p.id === chatProvider)?.models
+      .find((m) => m.id === chatModel);
+    const seedThinkEnabled = hasReasoning(modelDef) && chatThinkEnabled;
+    // Default to "agent" mode for project-bound conversations; standalone
+    // conversations inherit whatever the user has globally selected.
+    const seedModeId: ChatModeId = projectId ? "agent" : chatModeId;
     const conv = await api.createConversation({
       projectId,
       name: t("sidebar.newConversation"),
       providerId: chatProvider,
       modelId: chatModel,
       thinkBudget: chatThinkBudget,
-      thinkEnabled: false,
-      modeId: chatModeId
+      thinkEnabled: seedThinkEnabled,
+      modeId: seedModeId
     });
     setActiveConversation(conv);
-    setActivePage("chat");
     if (projectId) {
       // Make sure the parent project is expanded so the new conv is visible.
       setExpandedProjectIds((prev) => ({ ...prev, [projectId]: true }));
+      // Route a brand-new under-project conversation to the project landing
+      // page (per UX). The landing composer will reuse this conv on first send.
+      const proj = projects.find((p) => p.id === projectId);
+      if (proj) {
+        setActiveProject(proj);
+        setProjectDraftConversation(conv);
+        setActivePage("project");
+      } else {
+        setActivePage("chat");
+      }
+    } else {
+      setActivePage("chat");
     }
     await refreshConversations();
-  }, [chatProvider, chatModel, chatThinkBudget, chatModeId, refreshConversations, setActivePage, setExpandedProjectIds, t]);
+  }, [chatProvider, chatModel, chatThinkBudget, chatThinkEnabled, chatModeId, projects, refreshConversations, setActivePage, setExpandedProjectIds, t]);
 
   const handleCreateProject = useCallback(async () => {
     const api = window.electronAPI;
@@ -1313,17 +1752,50 @@ export function App() {
     if (activeConversation && activeConversation.projectId === project.id) {
       setActiveConversationSafe(null);
     }
+    // If the project landing page was showing this project, navigate away.
+    if (activeProject?.id === project.id) {
+      setActiveProject(null);
+      setProjectDraftConversation(null);
+      setActivePage("chat");
+    }
     await Promise.all([refreshProjects(), refreshConversations()]);
-  }, [activeConversation, refreshConversations, refreshProjects, setActiveConversationSafe, t]);
+  }, [activeConversation, activeProject, refreshConversations, refreshProjects, setActivePage, setActiveConversationSafe, t]);
 
   const toggleProjectExpanded = useCallback((projectId: string) => {
     setExpandedProjectIds((prev) => ({ ...prev, [projectId]: !prev[projectId] }));
   }, [setExpandedProjectIds]);
 
+  const handleOpenProject = useCallback((project: Project, draftConv: Conversation | null = null) => {
+    setActiveProject(project);
+    setProjectDraftConversation(draftConv);
+    setActivePage("project");
+    setExpandedProjectIds((prev) => ({ ...prev, [project.id]: true }));
+    // NOTE: We intentionally do NOT touch the global `chatModeId` here. The
+    // global "对话" page's mode selector is the user's preference for casual
+    // chat and should survive project navigation. Project conversations are
+    // pinned to Agent at creation time (see `onEnsureConversation` and
+    // `handleNewConversation`), and their toolbar locks the dropdown to Agent.
+  }, [setActivePage, setExpandedProjectIds]);
+
   const handleSelectConversation = useCallback((conv: Conversation) => {
+    // If the conversation lives under a project AND has no messages yet,
+    // route to the project landing page with this conversation pre-attached
+    // (the first send will reuse it instead of creating another one).
+    if (conv.projectId) {
+      const preview = conversationPreviews[conv.id];
+      const isEmpty = preview === null || preview === undefined;
+      if (isEmpty) {
+        const proj = projects.find((p) => p.id === conv.projectId);
+        if (proj) {
+          handleOpenProject(proj, conv);
+          setActiveConversation(conv);
+          return;
+        }
+      }
+    }
     setActiveConversation(conv);
     setActivePage("chat");
-  }, [setActivePage]);
+  }, [setActivePage, conversationPreviews, projects, handleOpenProject]);
 
   const handleDeleteConversation = useCallback(async (id: string) => {
     if (!window.electronAPI?.deleteConversation) return;
@@ -1392,19 +1864,23 @@ export function App() {
     if (activeConversation) return activeConversation;
     const api = window.electronAPI;
     if (!api?.createConversation) throw new Error("conversation API unavailable");
+    const modelDef = AI_PROVIDERS_DEFAULT
+      .find((p) => p.id === chatProvider)?.models
+      .find((m) => m.id === chatModel);
+    const seedThinkEnabled = hasReasoning(modelDef) && chatThinkEnabled;
     const conv = await api.createConversation({
       projectId: null,
       name: "New Conversation",
       providerId: chatProvider,
       modelId: chatModel,
       thinkBudget: chatThinkBudget,
-      thinkEnabled: false,
+      thinkEnabled: seedThinkEnabled,
       modeId: chatModeId
     });
     setActiveConversation(conv);
     void refreshConversations();
     return conv;
-  }, [activeConversation, chatProvider, chatModel, chatThinkBudget, chatModeId, refreshConversations]);
+  }, [activeConversation, chatProvider, chatModel, chatThinkBudget, chatThinkEnabled, chatModeId, refreshConversations]);
 
   // When the user opens a saved conversation, restore its mode in the UI selector.
   useEffect(() => {
@@ -1480,7 +1956,18 @@ export function App() {
 
   const shellStyle = useMemo(() => {
     const selectedBackground = backgroundClassMap[background] ?? backgroundClassMap.dark;
-    const selectedText = textClassMap[text] ?? textClassMap.ivory;
+    const rawText = textClassMap[text] ?? textClassMap.ivory;
+
+    // Light backgrounds need a dark-ink text family to stay readable. If the
+    // user previously selected a light text color (e.g. ivory, snow) for the
+    // dark shell, we fall back to a darker family at render time so the UI
+    // doesn't end up white-on-white. We don't mutate the stored preference —
+    // switching back to a dark background restores the original color.
+    const lightTextColors = new Set(["ivory", "warm-white", "cream", "snow", "linen", "pearl", "soft-gold"]);
+    const selectedText = background === "light" && lightTextColors.has(text)
+      ? textClassMap.charcoal
+      : rawText;
+
     return {
       ["--lp-bg" as string]: selectedBackground.base,
       ["--lp-bg-2" as string]: selectedBackground.top,
@@ -1539,6 +2026,7 @@ export function App() {
   return (
     <div
       className="h-screen overflow-hidden bg-[var(--lp-bg)] text-[var(--lp-text)] [font-family:'PingFang_SC','HarmonyOS_Sans_SC','Helvetica_Neue',Inter,system-ui,sans-serif] [font-feature-settings:'ss01','cv11'] antialiased"
+      data-bg={background}
       style={shellStyle}
     >
       <div className="flex h-screen overflow-hidden">
@@ -1617,25 +2105,36 @@ export function App() {
                 {projects.map((p) => {
                   const expanded = !!expandedProjectIds[p.id];
                   const projectConvs = conversations.filter((c) => c.projectId === p.id);
+                  const isActiveProject = activePage === "project" && activeProject?.id === p.id;
                   return (
                     <div key={p.id} className="group/project">
-                      <div className="flex items-center justify-between rounded-xl px-2 py-2 hover:bg-white/[0.04]">
+                      <div className={`flex items-center justify-between rounded-xl px-2 py-2 transition hover:bg-white/[0.04] ${isActiveProject ? "bg-white/[0.06]" : ""}`}>
+                        {/* Chevron — toggles expansion only */}
                         <button
                           type="button"
-                          className="flex flex-1 min-w-0 items-center gap-2 text-left"
-                          onClick={() => toggleProjectExpanded(p.id)}
-                          title={p.path ? `${p.name}\n${p.path}` : p.name}
+                          className="mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--lp-soft-text)] hover:bg-white/[0.06] hover:text-[var(--lp-text)]"
+                          onClick={(e) => { e.stopPropagation(); toggleProjectExpanded(p.id); }}
+                          title={expanded ? t("sidebar2.collapse") : t("sidebar2.expand")}
+                          aria-label={expanded ? t("sidebar2.collapse") : t("sidebar2.expand")}
                         >
                           <svg
                             width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true"
-                            className="shrink-0 text-[var(--lp-soft-text)] transition-transform"
+                            className="transition-transform"
                             style={{ transform: expanded ? "rotate(90deg)" : "rotate(0deg)" }}
                           >
                             <path d="M4 2.5L8 6L4 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
+                        </button>
+                        {/* Project body — clicking opens the project landing page */}
+                        <button
+                          type="button"
+                          className="flex flex-1 min-w-0 items-center gap-2 text-left"
+                          onClick={() => handleOpenProject(p)}
+                          title={p.path ? `${p.name}\n${p.path}` : p.name}
+                        >
                           <span className="text-[15px] text-[var(--lp-text)]/72">📁</span>
                           <span className="flex flex-1 min-w-0 flex-col">
-                            <span className="truncate text-[14px] font-medium text-[var(--lp-text)]/88">{p.name}</span>
+                            <span className={`truncate text-[14px] font-medium ${isActiveProject ? "text-[var(--lp-text)]" : "text-[var(--lp-text)]/88"}`}>{p.name}</span>
                             {p.path ? (
                               <span className="truncate text-[10.5px] leading-tight text-[var(--lp-soft-text)]">{p.path}</span>
                             ) : null}
@@ -1669,19 +2168,46 @@ export function App() {
                             {projectConvs.map((c) => {
                               const active = activeConversation?.id === c.id;
                               const mode = CHAT_MODE_MAP[(c.modeId as ChatModeId) ?? "chat"] ?? CHAT_MODE_MAP.chat;
+                              const stream = activeStreams[c.id];
+                              const isLiveStreaming = stream?.status === "streaming";
                               return (
-                                <button
+                                <div
                                   key={c.id}
-                                  type="button"
-                                  className={`flex w-full items-center gap-2 truncate rounded-lg px-2 py-1.5 text-left text-[13px] transition hover:bg-white/[0.04] ${
+                                  className={`group/conv flex items-center gap-1 rounded-lg pr-1 transition hover:bg-white/[0.04] ${
                                     active ? "bg-white/[0.06] text-[var(--lp-text)]" : "text-[var(--lp-text)]/82"
                                   }`}
-                                  onClick={() => handleSelectConversation(c)}
-                                  title={c.name}
                                 >
-                                  <span className="text-[12px] leading-none opacity-90">{mode.icon}</span>
-                                  <span className="truncate">{c.name}</span>
-                                </button>
+                                  <button
+                                    type="button"
+                                    className="flex flex-1 min-w-0 items-center gap-2 truncate px-2 py-1.5 text-left text-[13px]"
+                                    onClick={() => handleSelectConversation(c)}
+                                    title={c.name}
+                                  >
+                                    <span className="relative text-[12px] leading-none opacity-90">
+                                      {mode.icon}
+                                      {isLiveStreaming ? (
+                                        <span className="absolute -right-1.5 -top-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)] lp-streaming-dot" />
+                                      ) : null}
+                                    </span>
+                                    <span className="truncate">{c.name}</span>
+                                  </button>
+                                  {isLiveStreaming ? (
+                                    <button
+                                      type="button"
+                                      className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-[11px] text-red-300 hover:bg-red-500/15 hover:text-red-200"
+                                      onClick={(e) => { e.stopPropagation(); cancelChatStream(c.id); }}
+                                      title={t("sidebar2.stopGenTitle")}
+                                    >
+                                      <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1" /></svg>
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="hidden h-5 w-5 shrink-0 items-center justify-center rounded text-[14px] leading-none text-[var(--lp-soft-text)] hover:bg-red-500/10 hover:text-red-400 group-hover/conv:flex"
+                                    onClick={(e) => { e.stopPropagation(); void handleDeleteConversation(c.id); }}
+                                    title={t("sidebar2.deleteTitle")}
+                                  >×</button>
+                                </div>
                               );
                             })}
                           </div>
@@ -1714,7 +2240,7 @@ export function App() {
                 <path d="M4 2.5L8 6L4 9.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
               <span>{t("sidebar.conversations")}</span>
-              <span className="rounded-full bg-white/[0.06] px-1.5 text-[11px] leading-[18px]">{conversations.length}</span>
+              <span className="rounded-full bg-white/[0.06] px-1.5 text-[11px] leading-[18px]">{unattachedConversations.length}</span>
             </button>
             <div className="flex items-center gap-1 text-[var(--lp-soft-text)]">
               <button
@@ -1725,11 +2251,11 @@ export function App() {
               >＋</button>
             </div>
           </div>
-          {!conversationsOpen ? null : conversations.length === 0 ? (
+          {!conversationsOpen ? null : unattachedConversations.length === 0 ? (
             <div className="mt-2 px-3 text-[12px] text-[var(--lp-soft-text)]">{t("sidebar.emptyConversations")}</div>
           ) : (
             <div className="mt-1 flex flex-col gap-0.5 px-1">
-              {conversations.map((c) => {
+              {unattachedConversations.map((c) => {
                 const active = activeConversation?.id === c.id;
                 const mode = CHAT_MODE_MAP[(c.modeId as ChatModeId) ?? "chat"] ?? CHAT_MODE_MAP.chat;
                 const stream = activeStreams[c.id];
@@ -1868,7 +2394,11 @@ export function App() {
             style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
           >
             <div className="text-[14px] font-medium text-[var(--lp-text)]/86">
-              {activePage === "chat" ? t("home.pageTitle") : t("sidebar.modelConfig")}
+              {activePage === "chat"
+                ? t("home.pageTitle")
+                : activePage === "project"
+                  ? (activeProject?.name ?? t("sidebar.projects"))
+                  : t("sidebar.modelConfig")}
             </div>
             <div
               className="flex items-center gap-2 text-[var(--lp-soft-text)]"
@@ -1886,9 +2416,28 @@ export function App() {
               onConversationsChanged={() => { void refreshConversations(); }}
               defaultProviderId={chatProvider}
               defaultModelId={chatModel}
+              attachImagesAllowed={(() => {
+                // Resolve the effective (provider, model) the same way the
+                // composer does, then check the catalog's `vision` capability.
+                // Unknown / custom models default to true so we never gate the
+                // user out of a workflow we don't have metadata for.
+                const pid = activeConversation?.providerId ?? chatProvider;
+                const mid = activeConversation?.modelId ?? chatModel;
+                const m = AI_PROVIDERS_DEFAULT.find((p) => p.id === pid)?.models.find((x) => x.id === mid);
+                return m ? m.capabilities.includes("vision") : true;
+              })()}
               defaultThinkBudget={chatThinkBudget}
+              defaultThinkEnabled={chatThinkEnabled}
               activeModeId={chatModeId}
-              liveStream={activeConversation ? activeStreams[activeConversation.id] : undefined}
+              liveStream={(() => {
+                if (!activeConversation) return undefined;
+                const s = activeStreams[activeConversation.id];
+                if (!s) return undefined;
+                // Project an `agentRunId` onto the ChatPanel snapshot so the
+                // TodoPanel (and any future subcomponent) can subscribe to
+                // live runtime events without re-plumbing every prop.
+                return { ...s, agentRunId: s.isAgentRun ? s.streamId : undefined };
+              })()}
               onStartStream={startChatStream}
               onCancelStream={cancelChatStream}
               onRetryStream={retryChatStream}
@@ -1910,12 +2459,29 @@ export function App() {
               }}
               toolbar={
                 <>
+                  {/* Project conversations are locked to Agent mode (only that
+                      mode shows in the dropdown). The global "对话" page keeps
+                      every non-Agent mode. */}
                   <ModeSelector
-                    selectedModeId={chatModeId}
+                    selectedModeId={activeConversation?.projectId ? "agent" : chatModeId}
+                    availableModeIds={
+                      activeConversation?.projectId
+                        ? PROJECT_CHAT_MODE_IDS
+                        : STANDALONE_CHAT_MODE_IDS
+                    }
                     onChange={(id) => {
-                      setChatModeId(id);
-                      // Persist on active conversation, if any (so reload restores it).
                       const conv = activeConversation;
+                      if (conv?.projectId) {
+                        // No-op for project chats: Agent is the only option,
+                        // but persist defensively in case stale state slipped in.
+                        if (conv && window.electronAPI?.updateConversation) {
+                          void window.electronAPI.updateConversation(conv.id, { modeId: id }).then((updated) => {
+                            if (updated) setActiveConversation(updated);
+                          });
+                        }
+                        return;
+                      }
+                      setChatModeId(id);
                       if (conv && window.electronAPI?.updateConversation) {
                         void window.electronAPI.updateConversation(conv.id, { modeId: id }).then((updated) => {
                           if (updated) setActiveConversation(updated);
@@ -1927,9 +2493,114 @@ export function App() {
                     selectedProvider={chatProvider}
                     selectedModel={chatModel}
                     thinkBudget={chatThinkBudget}
+                    thinkEnabled={chatThinkEnabled}
                     onChangeProvider={setChatProvider}
                     onChangeModel={setChatModel}
-                    onChangeBudget={setChatThinkBudget}
+                    onChangeBudget={(b) => {
+                      setChatThinkBudget(b);
+                      // Mirror onto the active conversation so a reload restores it.
+                      const conv = activeConversation;
+                      if (conv && window.electronAPI?.updateConversation) {
+                        void window.electronAPI.updateConversation(conv.id, { thinkBudget: b }).then((updated) => {
+                          if (updated) setActiveConversation(updated);
+                        });
+                      }
+                    }}
+                    onChangeThinkEnabled={(next) => {
+                      setChatThinkEnabled(next);
+                      const conv = activeConversation;
+                      if (conv && window.electronAPI?.updateConversation) {
+                        void window.electronAPI.updateConversation(conv.id, { thinkEnabled: next }).then((updated) => {
+                          if (updated) setActiveConversation(updated);
+                        });
+                      }
+                    }}
+                    providerConfigs={providerCache}
+                  />
+                </>
+              }
+            />
+          ) : activePage === "project" && activeProject ? (
+            <ProjectLandingPanel
+              project={activeProject}
+              draftConversation={projectDraftConversation}
+              defaultProviderId={chatProvider}
+              defaultModelId={chatModel}
+              defaultThinkBudget={chatThinkBudget}
+              defaultThinkEnabled={chatThinkEnabled}
+              activeModeId="agent"
+              onEnsureConversation={async () => {
+                const api = window.electronAPI;
+                if (!api?.createConversation) throw new Error("conversation API unavailable");
+                const modelDef = AI_PROVIDERS_DEFAULT
+                  .find((p) => p.id === chatProvider)?.models
+                  .find((m) => m.id === chatModel);
+                const seedThinkEnabled = hasReasoning(modelDef) && chatThinkEnabled;
+                // Project-bound conversations always start in Agent mode.
+                const conv = await api.createConversation({
+                  projectId: activeProject.id,
+                  name: t("sidebar.newConversation"),
+                  providerId: chatProvider,
+                  modelId: chatModel,
+                  thinkBudget: chatThinkBudget,
+                  thinkEnabled: seedThinkEnabled,
+                  modeId: "agent"
+                });
+                setActiveConversation(conv);
+                setProjectDraftConversation(conv);
+                await refreshConversations();
+                return conv;
+              }}
+              onStartStream={startChatStream}
+              onConversationStarted={(conv) => {
+                // First message is in flight — flip into the chat view so the
+                // user immediately sees the streaming reply.
+                setActiveConversation(conv);
+                setProjectDraftConversation(null);
+                setActivePage("chat");
+              }}
+              toolbar={
+                <>
+                  {/* Project landing is locked to Agent. We still render the
+                      selector (instead of a static badge) so the visual rhythm
+                      with the model picker matches the standalone chat. */}
+                  <ModeSelector
+                    selectedModeId="agent"
+                    availableModeIds={PROJECT_CHAT_MODE_IDS}
+                    onChange={(id) => {
+                      const conv = projectDraftConversation;
+                      if (conv && window.electronAPI?.updateConversation) {
+                        void window.electronAPI.updateConversation(conv.id, { modeId: id }).then((updated) => {
+                          if (updated) setProjectDraftConversation(updated);
+                        });
+                      }
+                    }}
+                  />
+                  <ModelSelector
+                    selectedProvider={chatProvider}
+                    selectedModel={chatModel}
+                    thinkBudget={chatThinkBudget}
+                    thinkEnabled={chatThinkEnabled}
+                    onChangeProvider={setChatProvider}
+                    onChangeModel={setChatModel}
+                    onChangeBudget={(b) => {
+                      setChatThinkBudget(b);
+                      const conv = projectDraftConversation;
+                      if (conv && window.electronAPI?.updateConversation) {
+                        void window.electronAPI.updateConversation(conv.id, { thinkBudget: b }).then((updated) => {
+                          if (updated) setProjectDraftConversation(updated);
+                        });
+                      }
+                    }}
+                    onChangeThinkEnabled={(next) => {
+                      setChatThinkEnabled(next);
+                      const conv = projectDraftConversation;
+                      if (conv && window.electronAPI?.updateConversation) {
+                        void window.electronAPI.updateConversation(conv.id, { thinkEnabled: next }).then((updated) => {
+                          if (updated) setProjectDraftConversation(updated);
+                        });
+                      }
+                    }}
                     providerConfigs={providerCache}
                   />
                 </>
@@ -1955,6 +2626,25 @@ export function App() {
       {settingsOpen ? (
         <SettingsPage onClose={() => setSettingsOpen(false)} appVersion={appInfo?.version} />
       ) : null}
+
+      <PermissionApprovalModal
+        queue={permissionQueue}
+        onDecide={decidePermission}
+        onDenyAll={denyAllPermissions}
+      />
+
+      {activeConversation?.projectId ? <RunningTasksTray projectId={activeConversation.projectId} /> : null}
+
+      <ResumeToast
+        onOpenConversation={(convId) => {
+          // Best-effort: select the conversation by id. We rely on
+          // existing conversation lookup logic — if the conversation
+          // isn't in the sidebar's current list we still try to set
+          // the active id; the loader will reconcile.
+          const conv = conversations.find((c) => c.id === convId);
+          if (conv) setActiveConversationSafe(conv);
+        }}
+      />
     </div>
   );
 }

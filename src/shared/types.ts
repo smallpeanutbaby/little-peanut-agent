@@ -36,7 +36,64 @@ export interface AppearanceSettings {
   language: "zh-CN" | "en";
 }
 
-export type ThinkBudget = "none" | "minimal" | "low" | "medium" | "high" | "max" | "xhigh";
+/**
+ * Qualitative reasoning effort levels.
+ *
+ * Each {@link ThinkProtocol} only exposes a subset (see PROTOCOL_LEVELS in
+ * `think-presets.ts`).
+ *
+ *  - `none`     : reasoning off (mapBudget returns undefined)
+ *  - `dynamic`  : Gemini-only "let the model decide" (-1 budget)
+ *  - `minimal`  : OpenAI / Gemini lowest tier
+ *  - `low/medium/high` : universal
+ *  - `xhigh`    : OpenAI 5th tier (added on gpt-5.4 / gpt-5.5)
+ *  - `max`      : Anthropic only (64k thinking budget tokens)
+ */
+export type ThinkBudget =
+  | "none"
+  | "dynamic"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+
+/**
+ * Identifies a family of reasoning APIs that share a common control surface.
+ * Each protocol has its own canonical set of effort levels — see
+ * `PROTOCOL_LEVELS` in `think-presets.ts`. The renderer drives UI off this
+ * single field; the main-process adapter (`mapBudget`) translates each level
+ * to the provider-specific value (numeric tokens / enum string / -1).
+ */
+export type ThinkProtocol = "openai" | "anthropic" | "gemini" | "qwen" | "binary";
+
+/**
+ * What a model can do. Multi-label — a single model can have any combination
+ * (e.g. gpt-5.5 = text + vision + reasoning + tools, claude-opus-4-7 = text
+ * + vision + reasoning + tools, kimi-k2.6 = text + vision + reasoning + tools).
+ * Drives:
+ *  - whether the ModelSelector shows a Think chip (`reasoning`)
+ *  - whether ChatPanel's attach-image button is enabled (`vision`)
+ *  - small capability badges on the AI config model list
+ *  - future filtering / pages for image-gen / audio / embedding
+ *
+ *  - `text`      : standard chat / text generation
+ *  - `vision`    : accepts image inputs (gpt-5.x, claude-4.x, gemini-2.5+/3.x, …)
+ *  - `reasoning` : exposes a reasoning_effort / thinking knob
+ *  - `tools`     : supports function-calling / tool-use
+ *  - `image-gen` : outputs images (gpt-image-1, imagen, …)
+ *  - `audio`     : speech in/out
+ *  - `embedding` : produces embedding vectors only (no chat)
+ */
+export type ModelCapability =
+  | "text"
+  | "vision"
+  | "reasoning"
+  | "tools"
+  | "image-gen"
+  | "audio"
+  | "embedding";
 
 /**
  * Wire-format protocol identifiers supported by the AI adapter layer.
@@ -74,6 +131,19 @@ export interface ModelConfig {
   providerId: string;
   modelId: string;
   enabled: boolean;
+  /**
+   * What the model supports. For built-in models this is seeded from the
+   * provider catalog (`AI_PROVIDERS_DEFAULT`); for custom models it's set in
+   * the "Add model" modal. Stored as a JSON array in SQLite.
+   */
+  capabilities: ModelCapability[];
+  /**
+   * Reasoning effort family. `null` when capabilities doesn't include
+   * `reasoning`. Single source of truth for which level buttons appear in
+   * the ModelSelector dropdown — UI no longer carries a per-model
+   * `thinkLevels` array.
+   */
+  thinkProtocol: ThinkProtocol | null;
   thinkEnabled: boolean;
   thinkBudget: ThinkBudget;
   thinkBodyOn: string;
@@ -135,6 +205,14 @@ export interface ChatRequestOptions {
   messages: ChatMessageInput[];
   thinkEnabled?: boolean;
   thinkBudget?: ThinkBudget;
+  /**
+   * Reasoning family for this model. Drives how the adapter maps
+   * {@link thinkBudget} to a request-body field (reasoning_effort vs
+   * budget_tokens vs thinkingBudget vs enable_thinking…). Optional only for
+   * backwards compatibility with renderer builds that pre-date v4; main
+   * process adapters fall back to a per-adapter default when omitted.
+   */
+  thinkProtocol?: ThinkProtocol | null;
   temperature?: number;
   maxTokens?: number;
 }
@@ -210,6 +288,54 @@ export interface ChatMessage {
   createdAt: number;
 }
 
+// ─── Git ──────────────────────────────────────────────────────────────
+
+/**
+ * Per-file working-tree status. Mirrors the two-letter codes that
+ * `git status --porcelain=v1` emits, normalised into a single bucket
+ * so the renderer can group + colour-code without re-implementing the
+ * porcelain parser.
+ */
+export type GitFileStatus =
+  | "modified"
+  | "added"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked"
+  | "ignored"
+  | "conflicted";
+
+export interface GitFileChange {
+  /** Repo-relative path (POSIX-style separators). */
+  path: string;
+  /** Bucket used by the UI grouping. */
+  status: GitFileStatus;
+  /** True if the change is in the index (staged). */
+  staged: boolean;
+  /** Raw two-char porcelain code (e.g. " M", "??", "MM"). Useful for tooltips. */
+  raw: string;
+}
+
+export interface GitStatusOk {
+  ok: true;
+  /** Current branch name, or `null` for detached HEAD. */
+  branch: string | null;
+  /** Upstream ref shown in `## branch...origin/branch`, if any. */
+  upstream: string | null;
+  ahead: number;
+  behind: number;
+  files: GitFileChange[];
+}
+
+export interface GitStatusErr {
+  ok: false;
+  reason: "no-path" | "not-a-repo" | "git-not-found" | "git-error";
+  message?: string;
+}
+
+export type GitStatusResult = GitStatusOk | GitStatusErr;
+
 // ─── MCP (Model Context Protocol) ────────────────────────────────────
 
 /**
@@ -259,4 +385,176 @@ export interface McpTestResult {
   capabilities?: string[];
   /** Human-readable failure description on `ok=false`. */
   message?: string;
+}
+
+// ─── Agent Runtime ───────────────────────────────────────────────────
+
+/** Structured content block — the atomic unit of an agent message
+ *  transcript. Mirrors the canonical block model used inside the
+ *  runtime; the renderer reads these directly. */
+export type AgentMessagePartType =
+  | "text"
+  | "reasoning"
+  | "tool_use"
+  | "tool_result"
+  | "attachment_ref"
+  | "compact_marker";
+
+export interface AgentMessagePart {
+  id: string;
+  messageId: string;
+  seq: number;
+  type: AgentMessagePartType;
+  toolCallId: string | null;
+  toolName: string | null;
+  inputJson: string | null;
+  outputJson: string | null;
+  outputPreview: string | null;
+  isError: boolean;
+  outputFilePath: string | null;
+  tokens: number | null;
+  textContent: string | null;
+  createdAt: number;
+}
+
+export type AgentToolRunStatus =
+  | "pending"
+  | "permission_pending"
+  | "running"
+  | "completed"
+  | "denied"
+  | "errored"
+  | "cancelled";
+
+export interface AgentToolRun {
+  toolCallId: string;
+  conversationId: string;
+  messageId: string;
+  toolName: string;
+  status: AgentToolRunStatus;
+  startedAt: number;
+  endedAt: number | null;
+  errorCode: string | null;
+  costUsd: number | null;
+}
+
+export type AgentTodoStatus = "pending" | "in_progress" | "completed";
+export interface AgentTodoItem {
+  id: string;
+  projectId: string;
+  conversationId: string | null;
+  content: string;
+  status: AgentTodoStatus;
+  seq: number;
+  updatedAt: number;
+}
+
+export type AgentTaskStatus = "pending" | "running" | "completed" | "failed" | "killed";
+
+/** A row in `agent_task` — created by `TaskManager.start()` for every
+ *  subagent invocation. Surfaced to the RunningTasksTray. */
+export interface AgentTaskItem {
+  id: string;
+  projectId: string;
+  conversationId: string | null;
+  type: string;
+  status: AgentTaskStatus;
+  payloadJson: string;
+  resultJson: string | null;
+  pid: number | null;
+  startedAt: number;
+  endedAt: number | null;
+}
+
+/** Wire-format event the main process pushes for each agent run.
+ *  Identical to the runtime's `AgentEvent` so the renderer can render
+ *  blocks without an extra mapping layer. */
+export type AgentRunEvent =
+  | {
+      kind: "llm";
+      event:
+        | { type: "message_start" }
+        | { type: "text_delta"; text: string }
+        | { type: "reasoning_delta"; text: string }
+        | { type: "tool_use_start"; id: string; name: string }
+        | { type: "tool_use_input_delta"; id: string; jsonChunk: string }
+        | { type: "tool_use_stop"; id: string; finalInput: unknown }
+        | {
+            type: "message_stop";
+            stopReason?: "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "error";
+          }
+        | { type: "usage"; promptTokens: number; completionTokens: number; costUsd?: number }
+        | { type: "error"; code: string; retryable: boolean; message: string };
+    }
+  | {
+      kind: "tool_run_start";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+    }
+  | {
+      kind: "tool_run_progress";
+      toolCallId: string;
+      message?: string;
+      data?: unknown;
+    }
+  | {
+      kind: "tool_run_end";
+      toolCallId: string;
+      status: "completed" | "errored" | "denied" | "cancelled";
+      preview?: string;
+      isError?: boolean;
+      durationMs: number;
+    }
+  | {
+      kind: "context_compacted";
+      before: number;
+      after: number;
+      notes: string[];
+    }
+  | {
+      kind: "permission_request";
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      uiPreview?: { title?: string; subtitle?: string; body?: string };
+      /** One-line "why this is risky" string from the tool's
+       *  checkPermissions() (e.g. Bash risk classifier output). The
+       *  PermissionApprovalModal renders this as the prominent reason
+       *  banner above the action buttons. */
+      toolReason?: string;
+    }
+  | {
+      kind: "message_persisted";
+      messageId: string;
+      role: "user" | "assistant";
+    }
+  | {
+      kind: "terminal";
+      reason: "completed" | "cancelled" | "budget_exceeded" | "max_iterations" | "stream_error";
+      message?: string;
+    };
+
+export interface AgentStartRunInput {
+  projectId: string;
+  conversationId: string;
+  userMessage: string;
+  providerId: string;
+  protocol: ProtocolId | string;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  temperature?: number;
+  thinkBudget?: ThinkBudget;
+  thinkEnabled?: boolean;
+  thinkProtocol?: ThinkProtocol | null;
+  maxOutputTokens?: number;
+  modeId?: string;
+  language?: "zh-CN" | "en";
+}
+
+export interface AgentPermissionResponse {
+  runId: string;
+  toolCallId: string;
+  decision: "allow_once" | "allow_session" | "allow_project" | "deny";
 }
