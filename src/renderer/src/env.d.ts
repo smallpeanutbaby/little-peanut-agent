@@ -147,6 +147,8 @@ declare global {
         lastRunStartedAt: number | null;
       }>>;
       discardInterruptedConversation: (conversationId: string) => Promise<void>;
+      resumeAgentRun: (conversationId: string) => Promise<{ runId: string }>;
+      setBypassPermissions: (bypass: boolean) => Promise<void>;
     };
   }
 }

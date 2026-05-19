@@ -51,8 +51,6 @@ function toOpenAiMessages(
   }
   for (const m of messages) {
     if (m.role === "system") {
-      // Shouldn't usually happen — runtime already lifts system to `system`
-      // — but if a caller smuggles one in, preserve order.
       const text = m.blocks
         .map((b) => (b.type === "text" ? b.text : b.type === "reasoning" ? b.text : ""))
         .filter(Boolean)
@@ -61,14 +59,13 @@ function toOpenAiMessages(
       continue;
     }
     if (m.role === "assistant") {
-      // Assistant carries text blocks (joined as `content`) plus
-      // tool_use blocks (lifted to `tool_calls`). Reasoning blocks are
-      // dropped from the wire — OpenAI Chat doesn't accept them on
-      // input — but the runtime keeps them in the transcript for the
-      // renderer.
       const text = m.blocks
         .filter((b) => b.type === "text")
         .map((b) => (b.type === "text" ? b.text : ""))
+        .join("");
+      const reasoning = m.blocks
+        .filter((b) => b.type === "reasoning")
+        .map((b) => (b.type === "reasoning" ? b.text : ""))
         .join("");
       const toolCalls = m.blocks
         .filter((b) => b.type === "tool_use")
@@ -85,6 +82,7 @@ function toOpenAiMessages(
         })
         .filter(Boolean);
       const msg: Record<string, unknown> = { role: "assistant", content: text || null };
+      if (reasoning) msg.reasoning_content = reasoning;
       if (toolCalls.length > 0) msg.tool_calls = toolCalls;
       out.push(msg);
       continue;
@@ -111,6 +109,68 @@ function toOpenAiMessages(
       out.push({ role: "user", content: text });
     }
   }
+  return sanitizeToolMessages(out);
+}
+
+/**
+ * Ensure every `role: "tool"` message is preceded by an assistant message
+ * that contains its `tool_call_id`. DeepSeek / OpenAI reject requests
+ * where tool results are orphaned (no matching tool_calls).
+ *
+ * Also ensures that every tool_call_id in an assistant message has a
+ * matching tool result; if not, injects a synthetic one so the API
+ * doesn't complain about missing results.
+ */
+function sanitizeToolMessages(msgs: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  let pendingToolCallIds = new Set<string>();
+
+  for (let i = 0; i < msgs.length; i++) {
+    const msg = msgs[i];
+
+    if (msg.role === "assistant" && Array.isArray(msg.tool_calls)) {
+      // Before pushing a new assistant with tool_calls, fill any
+      // unanswered tool_call_ids from the PREVIOUS assistant.
+      for (const id of pendingToolCallIds) {
+        out.push({ role: "tool", tool_call_id: id, content: "[no result — interrupted]" });
+      }
+      pendingToolCallIds = new Set<string>();
+      for (const tc of msg.tool_calls as Array<{ id?: string }>) {
+        if (tc.id) pendingToolCallIds.add(tc.id);
+      }
+      out.push(msg);
+      continue;
+    }
+
+    if (msg.role === "tool") {
+      const tcId = msg.tool_call_id as string;
+      if (pendingToolCallIds.has(tcId)) {
+        pendingToolCallIds.delete(tcId);
+        out.push(msg);
+      } else {
+        // Orphaned tool result — no preceding tool_call_id. Drop it to
+        // avoid the API error; the information is still in the DB.
+        console.warn(`[openai-adapter] dropping orphaned tool result for ${tcId}`);
+      }
+      continue;
+    }
+
+    // For non-tool, non-assistant messages: fill any unanswered tool_calls
+    // before we switch to a user/system turn.
+    if (msg.role !== "assistant" && pendingToolCallIds.size > 0) {
+      for (const id of pendingToolCallIds) {
+        out.push({ role: "tool", tool_call_id: id, content: "[no result — interrupted]" });
+      }
+      pendingToolCallIds = new Set<string>();
+    }
+    out.push(msg);
+  }
+
+  // Fill any remaining unanswered tool_calls at the end.
+  for (const id of pendingToolCallIds) {
+    out.push({ role: "tool", tool_call_id: id, content: "[no result — interrupted]" });
+  }
+
   return out;
 }
 

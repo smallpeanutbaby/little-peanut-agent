@@ -1,13 +1,11 @@
 /**
- * Block-based message renderer for agent runs.
+ * Block-based message renderer for agent runs — Cursor-inspired layout.
  *
- * Reads `message_part` rows persisted by the runtime (one row per
- * content block: text, reasoning, tool_use, tool_result) and groups
- * them by message. Each message becomes either:
- *  - a "user" bubble (text + any tool_result blocks rendered as cards)
- *  - an "assistant" bubble (reasoning + text + tool_use cards)
+ * Reads `message_part` rows and groups them by message. Each message:
+ *  - "user" → right-aligned bubble
+ *  - "assistant" → left-aligned: reasoning (collapsible) → markdown → tool cards
  *
- * Markdown is rendered via `react-markdown` with GFM.
+ * Tool cards pair tool_use with their matching tool_result for inline display.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -19,31 +17,40 @@ import type {
   ChatMessage
 } from "@shared/types";
 import { ToolUseCard, ToolResultCard } from "./AgentToolCards";
+import { renderPlanAssistantContent } from "./PlanPanel";
+import { isFinalPlanMessage } from "@shared/plan-ui";
 
 interface AgentMessageListProps {
   conversationId: string;
-  /** Persisted message rows for the conversation, in order. The agent
-   *  runtime already updates the row in real time; we just need to
-   *  re-fetch parts when the stream produces new chunks. */
   messages: ChatMessage[];
-  /** When non-null, the renderer reloads parts whenever the value
-   *  changes (typically `liveStream.status` / `liveStream.text`). */
   liveSignal?: unknown;
-  /** Optional running tool_run snapshots keyed by toolCallId — drives
-   *  the spinner on the most recent ToolUseCard before tool_run_end
-   *  fires. Not yet wired in M0; left undefined and the cards default
-   *  to their persisted status. */
   toolRunsById?: Record<string, AgentToolRun>;
   youLabel: string;
   assistantLabel: string;
   reasoningLabel: string;
+  /**
+   * Conversation's current mode. Drives whether the "Execute as Agent"
+   * handoff button is shown after the last assistant reply. Only "plan"
+   * triggers the button.
+   */
+  currentModeId?: string;
+  /** Called with the final plan markdown when the user clicks "Execute as Agent". */
+  onExecuteAsAgent?: (planText: string) => void;
+  /**
+   * When true, the live stream is still in progress for the active
+   * conversation. The handoff button is hidden until the stream
+   * finishes so the user can't dispatch a partial plan.
+   */
+  streamingInProgress?: boolean;
+  planExecuteLabel?: string;
+  planEditHint?: string;
+  planClarifyHint?: string;
 }
 
 interface RenderedMessage {
   id: string;
   role: "user" | "assistant" | "system";
   parts: AgentMessagePart[];
-  /** Fallback text (legacy rows without parts). */
   fallbackContent: string;
 }
 
@@ -54,7 +61,13 @@ export function AgentMessageList({
   toolRunsById,
   youLabel,
   assistantLabel,
-  reasoningLabel
+  reasoningLabel,
+  currentModeId,
+  onExecuteAsAgent,
+  streamingInProgress,
+  planExecuteLabel = "让 Agent 按此计划执行",
+  planEditHint = "可直接编辑下方方案，确认后交给 Agent 执行",
+  planClarifyHint = "在下方输入框回复你的选择，或发送「直接出方案」跳过确认"
 }: AgentMessageListProps) {
   const [partsByMessage, setPartsByMessage] = useState<Record<string, AgentMessagePart[]>>({});
 
@@ -71,11 +84,21 @@ export function AgentMessageList({
       }
       setPartsByMessage(grouped);
     });
-    return () => {
-      cancelled = true;
-    };
-    // re-load on stream tick AND when messages list changes
+    return () => { cancelled = true; };
   }, [conversationId, liveSignal, messages.length]);
+
+  // Build a global map: toolCallId → tool_result part (across all messages)
+  const resultByToolCallId = useMemo(() => {
+    const map: Record<string, AgentMessagePart> = {};
+    for (const parts of Object.values(partsByMessage)) {
+      for (const p of parts) {
+        if (p.type === "tool_result" && p.toolCallId) {
+          map[p.toolCallId] = p;
+        }
+      }
+    }
+    return map;
+  }, [partsByMessage]);
 
   const rendered = useMemo<RenderedMessage[]>(() => {
     return messages
@@ -88,8 +111,19 @@ export function AgentMessageList({
       }));
   }, [messages, partsByMessage]);
 
+  // Identify the very last assistant message — that's the only one that
+  // gets the "Execute as Agent" button when we're in plan mode. Older
+  // assistant turns in the same conversation stay button-less so the
+  // user doesn't accidentally re-dispatch a stale plan.
+  const lastAssistantMessageId = useMemo(() => {
+    for (let i = rendered.length - 1; i >= 0; i--) {
+      if (rendered[i].role === "assistant") return rendered[i].id;
+    }
+    return null;
+  }, [rendered]);
+
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-5">
+    <div className="mx-auto flex max-w-[860px] flex-col gap-4 pb-4">
       {rendered.map((m) => (
         <MessageRow
           key={m.id}
@@ -98,6 +132,14 @@ export function AgentMessageList({
           assistantLabel={assistantLabel}
           reasoningLabel={reasoningLabel}
           toolRunsById={toolRunsById}
+          resultByToolCallId={resultByToolCallId}
+          currentModeId={currentModeId}
+          isLastAssistant={m.id === lastAssistantMessageId}
+          onExecuteAsAgent={onExecuteAsAgent}
+          streamingInProgress={streamingInProgress}
+          planExecuteLabel={planExecuteLabel}
+          planEditHint={planEditHint}
+          planClarifyHint={planClarifyHint}
         />
       ))}
     </div>
@@ -109,79 +151,196 @@ function MessageRow({
   youLabel,
   assistantLabel,
   reasoningLabel,
-  toolRunsById
+  toolRunsById,
+  resultByToolCallId,
+  currentModeId,
+  isLastAssistant,
+  onExecuteAsAgent,
+  streamingInProgress,
+  planExecuteLabel,
+  planEditHint,
+  planClarifyHint
 }: {
   message: RenderedMessage;
   youLabel: string;
   assistantLabel: string;
   reasoningLabel: string;
   toolRunsById?: Record<string, AgentToolRun>;
+  resultByToolCallId: Record<string, AgentMessagePart>;
+  currentModeId?: string;
+  isLastAssistant?: boolean;
+  onExecuteAsAgent?: (planText: string) => void;
+  streamingInProgress?: boolean;
+  planExecuteLabel?: string;
+  planEditHint?: string;
+  planClarifyHint?: string;
 }) {
   const isUser = message.role === "user";
-  // User messages with tool_result parts are runtime-synthesized
-  // follow-ups; render the tool_result cards inline (no chat bubble).
   const toolResultParts = message.parts.filter((p) => p.type === "tool_result");
   const textParts = message.parts.filter((p) => p.type === "text");
   const reasoningParts = message.parts.filter((p) => p.type === "reasoning");
   const toolUseParts = message.parts.filter((p) => p.type === "tool_use");
+
+  // Messages containing ONLY tool_results (no text/tool_use) are
+  // runtime-synthesised follow-ups. We skip rendering them since
+  // results are now shown inline within the preceding ToolUseCard.
   const hasOnlyToolResults =
     toolResultParts.length > 0 && textParts.length === 0 && toolUseParts.length === 0;
+  if (hasOnlyToolResults) return null;
 
-  if (hasOnlyToolResults) {
-    return (
-      <div className="flex flex-col items-start gap-2">
-        {toolResultParts.map((p) => (
-          <ToolResultCard key={p.id} part={p} />
-        ))}
-      </div>
-    );
-  }
-
-  // Body content for the bubble = ordered text parts joined into one
-  // markdown string (so e.g. "intro paragraph\n\n```py\n...\n```\n\nnext"
-  // renders contiguously).
   const text =
     textParts.length > 0
       ? textParts.map((p) => p.textContent ?? "").join("")
       : message.fallbackContent;
   const reasoning = reasoningParts.map((p) => p.textContent ?? "").join("");
 
-  return (
-    <div className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}>
-      <div className="mb-1 text-[11px] text-[var(--lp-soft-text)]">
-        {isUser ? youLabel : assistantLabel}
-      </div>
-      {reasoning ? (
-        <details className="mb-1 max-w-[760px] rounded-lg border border-[var(--lp-border)] bg-white/[0.02] px-3 py-2 text-[12px] text-[var(--lp-soft-text)]">
-          <summary className="cursor-pointer select-none text-[12px] text-[var(--lp-muted)]">
-            {reasoningLabel}
-          </summary>
-          <pre className="mt-2 whitespace-pre-wrap font-mono text-[11.5px] leading-relaxed">
-            {reasoning}
-          </pre>
-        </details>
-      ) : null}
-      {text ? (
-        <div
-          className={`max-w-[760px] rounded-2xl px-4 py-3 text-[14px] leading-relaxed ${
-            isUser
-              ? "bg-[var(--lp-panel-2)] text-[var(--lp-text)]"
-              : "bg-white/[0.03] text-[var(--lp-text)]"
-          }`}
-        >
+  // User bubble
+  if (isUser) {
+    if (!text.trim()) return null;
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[75%] rounded-2xl bg-[var(--lp-panel-2)] px-4 py-3 text-[14px] leading-relaxed text-[var(--lp-text)]">
           <div className="lp-markdown">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // Assistant bubble.
+  //
+  // IMPORTANT: render parts in their actual `seq` order, interleaving
+  // text and tool_use blocks. The old implementation grouped them
+  // ("all text first, then all tools"), which made the wrap-up summary
+  // appear ABOVE tool cards that ran BEFORE it — i.e. it looked like
+  // the agent "kept executing after declaring done". The DB already
+  // returns parts ordered by seq ASC.
+  //
+  // We still:
+  //  - collect reasoning into a single collapsible block at the top
+  //  - skip tool_result parts (rendered inline inside ToolUseCard)
+  //  - fall back to `message.fallbackContent` if no text parts exist
+  const orderedParts = message.parts.filter(
+    (p) => p.type !== "reasoning" && p.type !== "tool_result"
+  );
+  const hasAnyTextPart = textParts.length > 0;
+
+  const planPanel =
+    currentModeId === "plan" && text.trim()
+      ? renderPlanAssistantContent(text, {
+          streamingInProgress: isLastAssistant ? streamingInProgress : true,
+          onExecuteAsAgent:
+            isLastAssistant && onExecuteAsAgent ? onExecuteAsAgent : undefined,
+          executeLabel: planExecuteLabel ?? "让 Agent 按此计划执行",
+          editHint: planEditHint ?? "",
+          hintReply: planClarifyHint ?? ""
+        })
+      : null;
+
+  return (
+    <div className="flex flex-col items-start gap-2">
+      {reasoning ? <ReasoningBlock label={reasoningLabel} text={reasoning} /> : null}
+
+      {orderedParts.length === 0 && !hasAnyTextPart && message.fallbackContent.trim() ? (
+        <div className="max-w-full rounded-2xl px-1 py-1 text-[14px] leading-relaxed text-[var(--lp-text)]">
+          <div className="lp-markdown">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.fallbackContent}</ReactMarkdown>
+          </div>
+        </div>
       ) : null}
-      {/* tool_use cards appear after the assistant text (matches the
-          model's order of operations: think → say → call tool). */}
-      {toolUseParts.length > 0 ? (
-        <div className="mt-2 flex w-full max-w-[760px] flex-col gap-2">
-          {toolUseParts.map((p) => {
-            const run = p.toolCallId ? toolRunsById?.[p.toolCallId] : undefined;
-            return <ToolUseCard key={p.id} part={p} liveStatus={run?.status} />;
-          })}
+
+      {planPanel ? <div className="w-full">{planPanel}</div> : null}
+
+      {orderedParts.map((p) => {
+        if (p.type === "text") {
+          const t = (p.textContent ?? "").trim();
+          if (!t) return null;
+          if (planPanel) return null;
+          return (
+            <div
+              key={p.id}
+              className="max-w-full rounded-2xl px-1 py-1 text-[14px] leading-relaxed text-[var(--lp-text)]"
+            >
+              <div className="lp-markdown">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{p.textContent ?? ""}</ReactMarkdown>
+              </div>
+            </div>
+          );
+        }
+        if (p.type === "tool_use") {
+          const run = p.toolCallId ? toolRunsById?.[p.toolCallId] : undefined;
+          const result = p.toolCallId ? resultByToolCallId[p.toolCallId] ?? null : null;
+          return (
+            <ToolUseCard
+              key={p.id}
+              part={p}
+              liveStatus={run?.status}
+              resultPart={result}
+            />
+          );
+        }
+        return null;
+      })}
+
+      {/* Plan-mode handoff button:
+       *
+       * When the conversation is in plan mode and THIS is the most
+       * recent assistant message, surface a "let Agent execute" button.
+       * Clicking it hands the plan markdown back to the owner, which
+       * flips conv.modeId → "agent" and dispatches a new user message.
+       *
+       * Gated on:
+       *  - not currently streaming (otherwise we'd hand off a partial plan)
+       *  - the message has at least some text to hand off
+       *  - the parent wired up the callback
+       */}
+      {!planPanel &&
+      currentModeId === "plan" &&
+      isLastAssistant &&
+      !streamingInProgress &&
+      onExecuteAsAgent &&
+      isFinalPlanMessage(
+        textParts.length > 0
+          ? textParts.map((p) => p.textContent ?? "").join("")
+          : message.fallbackContent
+      ) ? (
+        <button
+          type="button"
+          onClick={() => {
+            const planText =
+              textParts.length > 0
+                ? textParts.map((p) => p.textContent ?? "").join("")
+                : message.fallbackContent;
+            onExecuteAsAgent(planText);
+          }}
+          className="mt-1 inline-flex items-center gap-1.5 rounded-lg border border-[var(--lp-accent-border,var(--lp-border))] bg-[var(--lp-accent-bg,rgba(56,189,248,0.10))] px-3 py-1.5 text-[13px] font-medium text-[var(--lp-text)] hover:bg-[var(--lp-accent-bg-hover,rgba(56,189,248,0.18))] transition"
+        >
+          <span aria-hidden>⚡</span>
+          <span>让 Agent 按此计划执行</span>
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function ReasoningBlock({ label, text }: { label: string; text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="w-full max-w-full">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-[12px] text-[var(--lp-muted)] hover:bg-white/[0.04] transition"
+      >
+        <span className="text-[10px]">{open ? "▾" : "▸"}</span>
+        <span>{label}</span>
+      </button>
+      {open ? (
+        <div className="mt-1 rounded-lg border border-[var(--lp-border)] bg-white/[0.02] px-3 py-2">
+          <pre className="max-h-[300px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-[var(--lp-soft-text)]">
+            {text}
+          </pre>
         </div>
       ) : null}
     </div>

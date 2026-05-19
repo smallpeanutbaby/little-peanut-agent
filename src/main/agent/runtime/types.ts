@@ -53,6 +53,16 @@ export type AgentEvent =
       messageId: string;
       role: "user" | "assistant";
     }
+  | {
+      kind: "stage_enter";
+      stage: "planner" | "executor" | "reviewer";
+      model: string;
+    }
+  | {
+      kind: "stage_exit";
+      stage: "planner" | "executor" | "reviewer";
+      passed?: boolean;
+    }
   | { kind: "terminal"; reason: AgentTerminalReason; message?: string };
 
 export type AgentTerminalReason =

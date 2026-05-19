@@ -17,16 +17,34 @@ import { z } from "zod";
 import { buildTool, blockFromText, type ToolResult, type Tool } from "../Tool.js";
 import { validateProjectPath } from "../../permissions/pathValidation.js";
 
-const inputSchema = z.object({
-  path: z
-    .string()
-    .describe("Project-relative or absolute path of the file to write."),
-  content: z
-    .string()
-    .describe(
-      "Full new contents of the file. The tool overwrites the file atomically; there is no partial write or append mode."
-    )
-});
+// See Read/index.ts: tolerate `file_path` (Claude-Code-style alias) and also
+// `contents` (Cursor / GLM dialect) so the tool doesn't reject inputs purely
+// over field naming.
+const inputSchema = z.preprocess(
+  (raw) => {
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const o = { ...(raw as Record<string, unknown>) };
+      if (o.path === undefined && typeof o.file_path === "string") {
+        o.path = o.file_path;
+      }
+      if (o.content === undefined && typeof o.contents === "string") {
+        o.content = o.contents;
+      }
+      return o;
+    }
+    return raw;
+  },
+  z.object({
+    path: z
+      .string()
+      .describe("Project-relative or absolute path of the file to write."),
+    content: z
+      .string()
+      .describe(
+        "Full new contents of the file. The tool overwrites the file atomically; there is no partial write or append mode."
+      )
+  })
+);
 
 type Input = z.infer<typeof inputSchema>;
 

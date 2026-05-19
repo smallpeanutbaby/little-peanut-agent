@@ -590,8 +590,24 @@ export class AppDatabase {
 
   // ─── Messages ──────────────────────────────────────────────────────
 
+  /**
+   * UNFILTERED message list — used by the agent runtime to reconstruct
+   * the conversation it sends back to the LLM. Includes every row, even
+   * tool_result rows (those must stay in history for the OpenAI /
+   * Anthropic tool-calling protocols) and synthetic pipeline-stage
+   * prompts. For the UI list, use `listMessagesForRenderer` instead.
+   */
   listMessages(conversationId: string): ChatMessage[] {
-    const rows = this.db.prepare("SELECT * FROM message WHERE conversation_id=? ORDER BY created_at ASC, id ASC").all(conversationId) as Array<{
+    // ORDER BY created_at ASC, rowid ASC — `rowid` is SQLite's implicit
+    // monotonic insert counter (the `message` table uses a TEXT primary
+    // key so rowid stays as a separate hidden column). We need it as
+    // tiebreaker because `appendMessage` writes the user message and
+    // the assistant placeholder in back-to-back calls — same millisecond,
+    // same created_at — and the previous `id ASC` tiebreaker compared
+    // random ids from genId(), so the placeholder occasionally sorted
+    // BEFORE the user message and the renderer drew the answer above
+    // the question.
+    const rows = this.db.prepare("SELECT * FROM message WHERE conversation_id=? ORDER BY created_at ASC, rowid ASC").all(conversationId) as Array<{
       id: string; conversation_id: string; role: string; content: string; reasoning: string | null; tokens: number | null; attachments: string | null; created_at: number;
     }>;
     return rows.map((r) => ({
@@ -604,6 +620,72 @@ export class AppDatabase {
       attachments: parseAttachments(r.attachments),
       createdAt: r.created_at
     }));
+  }
+
+  /**
+   * FILTERED message list intended for the chat renderer.
+   *
+   * Hides two classes of `role='user'` rows that exist purely to feed
+   * the LLM protocol and would confuse a human reader if drawn as user
+   * bubbles:
+   *
+   *  1. **Tool-result rows.** The agent runtime persists tool_result
+   *     blocks as `role='user'` messages so the LLM history stays
+   *     protocol-correct. Their `message_part` rows are *all* of type
+   *     `tool_result`. We detect that with a `NOT EXISTS` of any
+   *     non-tool_result part. (Pure `role='user'` rows without any
+   *     parts — legacy rows — get rendered normally.)
+   *
+   *  2. **Pipeline-stage synthetic prompts.** In multi-model pipeline
+   *     mode, each stage (planner / executor / reviewer) dispatches a
+   *     fresh queryLoop whose `userMessage` is an orchestration prompt
+   *     like `[PLAN]\n...`, `[审查]\n...`, or `[REVIEWER FEEDBACK]\n...`.
+   *     Those rows carry real text parts, so SQL alone can't tell them
+   *     apart from human input — we match on a prefix sentinel.
+   */
+  listMessagesForRenderer(conversationId: string): ChatMessage[] {
+    const rows = this.db.prepare(`
+      SELECT m.* FROM message m
+      WHERE m.conversation_id = ?
+        AND NOT (
+          m.role = 'user'
+          AND EXISTS (SELECT 1 FROM message_part p WHERE p.message_id = m.id)
+          AND NOT EXISTS (
+            SELECT 1 FROM message_part p
+            WHERE p.message_id = m.id AND p.type != 'tool_result'
+          )
+        )
+      ORDER BY m.created_at ASC, m.rowid ASC
+    `).all(conversationId) as Array<{
+      id: string; conversation_id: string; role: string; content: string; reasoning: string | null; tokens: number | null; attachments: string | null; created_at: number;
+    }>;
+
+    const SYNTHETIC_USER_PREFIXES = [
+      "[PLAN]",
+      "[PLANNER",
+      "[REVIEW]",
+      "[REVIEWER",
+      "[审查]",
+      "[SYSTEM]"
+    ];
+    const isSyntheticPipelinePrompt = (role: string, content: string): boolean => {
+      if (role !== "user") return false;
+      const trimmed = content.trimStart();
+      return SYNTHETIC_USER_PREFIXES.some((p) => trimmed.startsWith(p));
+    };
+
+    return rows
+      .filter((r) => !isSyntheticPipelinePrompt(r.role, r.content ?? ""))
+      .map((r) => ({
+        id: r.id,
+        conversationId: r.conversation_id,
+        role: r.role as ChatRole,
+        content: r.content,
+        reasoning: r.reasoning,
+        tokens: r.tokens,
+        attachments: parseAttachments(r.attachments),
+        createdAt: r.created_at
+      }));
   }
 
   appendMessage(input: {
@@ -677,7 +759,7 @@ export class AppDatabase {
     const rows = this.db
       .prepare(`SELECT conversation_id, role, content, created_at FROM message
                 WHERE conversation_id IN (${placeholders}) AND role != 'system'
-                ORDER BY created_at DESC`)
+                ORDER BY created_at DESC, rowid DESC`)
       .all(...conversationIds) as Array<{ conversation_id: string; role: string; content: string; created_at: number }>;
     const out: Record<string, { role: string; content: string; createdAt: number } | null> = {};
     for (const cid of conversationIds) out[cid] = null;

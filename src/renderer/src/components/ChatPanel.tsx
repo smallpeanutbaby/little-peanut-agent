@@ -79,6 +79,14 @@ export interface ChatStreamSnapshot {
    *  the renderer subscribed to via `onAgentRun`. Sub-components (e.g.
    *  TodoPanel) use this to subscribe to runtime events too. */
   agentRunId?: string;
+  /** Last context compaction notice from the agent runtime. */
+  compaction?: { before: number; after: number; notes: string[] };
+  /** Current context budget utilization. */
+  contextBudget?: { usedTokens: number; budgetTokens: number; windowTokens: number; compacted: boolean };
+  /** For non-agent chat: signals that old messages were dropped to fit context. */
+  contextTrimmed?: { dropped: number; originalChars: number; finalChars: number };
+  /** Pipeline stage tracking for multi-model pipeline mode. */
+  pipelineStage?: { stage: "planner" | "executor" | "reviewer"; model: string } | null;
 }
 
 interface ChatPanelProps {
@@ -129,6 +137,14 @@ interface ChatPanelProps {
    * stream against the existing user message.
    */
   onRetryStream?: (params: { conversation: Conversation; failedAssistantId: string }) => Promise<{ ok: true } | { ok: false; reason: string; message?: string }>;
+  /**
+   * Hand off a plan-mode reply to the Agent. Invoked by the "Execute as
+   * Agent" button rendered at the end of the last assistant message when
+   * `activeModeId === "plan"`. The owner is expected to (a) flip the
+   * conversation's modeId to "agent" and (b) dispatch a new user message
+   * carrying the plan text. UI here just supplies the plan markdown.
+   */
+  onExecuteAsAgent?: (planText: string) => void;
   /** UI labels (i18n-ready). */
   labels: {
     heroTitle: string;
@@ -148,6 +164,150 @@ interface ChatPanelProps {
   };
   /** Children rendered above the textarea (typically the model selector / mode menu). */
   toolbar: React.ReactNode;
+  /** Slot rendered between message list and composer (e.g. permission approval card). */
+  aboveComposer?: React.ReactNode;
+  /** Persistent context budget info (survives stream cleanup). */
+  contextBudgetInfo?: {
+    usedTokens: number;
+    budgetTokens: number;
+    windowTokens: number;
+    compacted: boolean;
+    compaction?: { before: number; after: number; notes: string[] };
+    trimmed?: { dropped: number; originalChars: number; finalChars: number };
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Pipeline stage bar                                                         */
+/* -------------------------------------------------------------------------- */
+
+const STAGE_LABELS: Record<string, { icon: string; label: string; step: number }> = {
+  planner:  { icon: "📋", label: "制定计划", step: 1 },
+  executor: { icon: "⚡", label: "执行工作", step: 2 },
+  reviewer: { icon: "🔍", label: "审查结果", step: 3 }
+};
+
+function PipelineStageBar({ stage, model }: { stage: string; model: string }) {
+  const meta = STAGE_LABELS[stage] ?? { icon: "🔗", label: stage, step: 0 };
+  return (
+    <div className="mx-auto flex w-full max-w-[860px] items-center gap-2 px-6 py-1.5">
+      <div className="flex items-center gap-2 rounded-full border border-rose-400/30 bg-rose-400/10 px-3 py-1.5 text-[12px] font-medium text-rose-300">
+        <span>{meta.icon}</span>
+        <span>Stage {meta.step}/3: {meta.label}</span>
+        <span className="text-[10px] text-rose-300/60">({model})</span>
+        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-rose-400" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Plan-mode "read-only" banner.
+ *
+ * Sticky-rendered above the messages whenever the active conversation is
+ * in plan mode. The text explicitly states that files won't be modified
+ * — this matches what the runtime layer actually enforces (write tools
+ * are filtered out in `src/main/agent/ipc.ts`). Sets the user up to
+ * expect the handoff button at the end of the reply instead of being
+ * confused by the absence of tool cards.
+ */
+function PlanModeBanner() {
+  return (
+    <div className="mx-auto flex w-full max-w-[860px] items-center gap-2 px-6 py-1.5">
+      <div className="flex items-center gap-2 rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-1.5 text-[12px] font-medium text-sky-300">
+        <span aria-hidden>📐</span>
+        <span>计划模式 · 只读</span>
+        <span className="text-[10px] text-sky-300/70">
+          (只读 · 会先向你确认细节，定稿后再点末尾按钮交给 Agent 执行)
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* Context ring indicator (Cursor-style)                                      */
+/* -------------------------------------------------------------------------- */
+
+function ContextRing({ budget, compaction, trimmed }: {
+  budget?: { usedTokens: number; budgetTokens: number; windowTokens: number; compacted: boolean };
+  compaction?: { before: number; after: number; notes: string[] };
+  trimmed?: { dropped: number; originalChars: number; finalChars: number };
+}) {
+  if (!budget && !trimmed) return null;
+
+  // Denominator is the model's full window (e.g. 128k for DeepSeek, 1M
+  // for Gemini). budgetTokens is the *internal* autocompact threshold —
+  // surfacing it as "/ 100k" while the model is actually 128k just
+  // confused the user. We still expose budgetTokens in the tooltip so
+  // they can see when autocompact will kick in.
+  const denom = budget?.windowTokens && budget.windowTokens > 0 ? budget.windowTokens : budget?.budgetTokens ?? 0;
+  const pct = budget && denom > 0
+    ? Math.min(100, Math.round((budget.usedTokens / denom) * 100))
+    : 0;
+
+  // "Compact zone" — once we cross the autocompact trigger (budget * 0.75)
+  // we'd rather warn early than wait for the hard ceiling.
+  const compactTriggerPct = budget && denom > 0 && budget.budgetTokens > 0
+    ? Math.round(((budget.budgetTokens * 0.75) / denom) * 100)
+    : 75;
+  const ringColor = pct >= 90 ? "#ef4444" : pct >= compactTriggerPct ? "#f59e0b" : "#6b7280";
+  const r = 7;
+  const circumference = 2 * Math.PI * r;
+  const dashOffset = circumference - (pct / 100) * circumference;
+
+  const label = budget
+    ? `${formatTokensShort(budget.usedTokens)} / ${formatTokensShort(denom)}`
+    : trimmed
+      ? `已丢弃 ${trimmed.dropped} 条`
+      : "";
+
+  const tooltip = [
+    budget ? `上下文窗口: ${budget.usedTokens.toLocaleString()} / ${denom.toLocaleString()} tokens (${pct}%)` : "",
+    budget && budget.budgetTokens > 0 && budget.budgetTokens !== denom
+      ? `自动压缩阈值: ${Math.round(budget.budgetTokens * 0.75).toLocaleString()} tokens (≈${compactTriggerPct}%)`
+      : "",
+    budget?.compacted && compaction ? `已压缩: ${compaction.before.toLocaleString()} → ${compaction.after.toLocaleString()} tokens` : "",
+    trimmed ? `已丢弃 ${trimmed.dropped} 条早期消息` : ""
+  ].filter(Boolean).join("\n");
+
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full bg-white/[0.04] px-2 py-0.5 text-[10.5px] tabular-nums text-[var(--lp-soft-text)] transition hover:bg-white/[0.08]"
+      title={tooltip}
+    >
+      {budget ? (
+        <svg width="18" height="18" viewBox="0 0 18 18" className="flex-shrink-0">
+          <circle cx="9" cy="9" r={r} fill="none" stroke="currentColor" strokeWidth="2" opacity="0.1" />
+          <circle
+            cx="9" cy="9" r={r} fill="none"
+            stroke={ringColor} strokeWidth="2"
+            strokeDasharray={circumference}
+            strokeDashoffset={dashOffset}
+            strokeLinecap="round"
+            transform="rotate(-90 9 9)"
+            style={{ transition: "stroke-dashoffset 0.5s ease" }}
+          />
+          <text x="9" y="9.5" textAnchor="middle" dominantBaseline="middle"
+            fontSize="6" fill="currentColor" opacity="0.6"
+          >
+            {pct}
+          </text>
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="#f59e0b" strokeWidth="1.5" className="flex-shrink-0">
+          <path d="M8 1L1 14h14L8 1z" strokeLinejoin="round" />
+          <path d="M8 6v4M8 12v.5" strokeLinecap="round" />
+        </svg>
+      )}
+      <span>{label}</span>
+    </span>
+  );
+}
+
+function formatTokensShort(n: number): string {
+  if (n < 1000) return `${n}`;
+  if (n < 100_000) return `${(n / 1000).toFixed(1)}k`;
+  return `${Math.round(n / 1000)}k`;
 }
 
 /**
@@ -170,8 +330,11 @@ export function ChatPanel({
   onStartStream,
   onCancelStream,
   onRetryStream,
+  onExecuteAsAgent,
   labels,
-  toolbar
+  toolbar,
+  aboveComposer,
+  contextBudgetInfo
 }: ChatPanelProps) {
   const { t } = useTranslation();
   const [input, setInput] = useState("");
@@ -415,10 +578,13 @@ export function ChatPanel({
             <h1 className="text-[28px] font-semibold text-[var(--lp-text)]">{labels.heroTitle}</h1>
             <p className="mt-2 text-[15px] text-[var(--lp-soft-text)]">{labels.heroSubtitle}</p>
           </div>
-        ) : conversation && conversation.projectId && activeModeId === "agent" ? (
-          // Agent runs render block-by-block from `message_part` so tool
-          // cards / markdown / diffs survive page reloads. The legacy
-          // text-only renderer below is reserved for plain chat.
+        ) : conversation &&
+          conversation.projectId &&
+          (activeModeId === "agent" || activeModeId === "plan" || activeModeId === "pipeline") ? (
+          // Agent / Plan / Pipeline runs all render block-by-block from
+          // `message_part` so tool cards / markdown / diffs survive page
+          // reloads. The legacy text-only renderer below is reserved for
+          // plain chat modes.
           <>
             <div className="mx-auto -mb-1 w-full max-w-[860px] px-1 pt-1 text-right">
               <CostBadge conversationId={conversation.id} activeRunId={liveStream?.agentRunId ?? null} />
@@ -435,6 +601,12 @@ export function ChatPanel({
               youLabel={labels.you}
               assistantLabel={labels.assistant}
               reasoningLabel={labels.thinking}
+              currentModeId={activeModeId}
+              onExecuteAsAgent={onExecuteAsAgent}
+              streamingInProgress={Boolean(liveStream && liveStream.status === "streaming")}
+              planExecuteLabel={t("modes.plan.execute")}
+              planEditHint={t("modes.plan.editHint")}
+              planClarifyHint={t("modes.plan.clarifyHint")}
             />
           </>
         ) : (
@@ -461,10 +633,24 @@ export function ChatPanel({
         )}
       </div>
 
-      {/* Composer area — no harsh divider, no overlay fade (a translucent
-          fade ended up drawing a visible "strikethrough" band on top of the
-          last message). Just clean spacing keeps the empty-state look from
-          image 2 consistent when there are messages. */}
+      {/* Pipeline stage indicator */}
+      {liveStream?.pipelineStage ? (
+        <PipelineStageBar stage={liveStream.pipelineStage.stage} model={liveStream.pipelineStage.model} />
+      ) : null}
+
+      {/* Plan-mode read-only banner — only shown when the conversation
+       *  is in plan mode. Sets user expectations: "this mode will NOT
+       *  modify files; click the button at the end of the reply to
+       *  hand the plan off to Agent for execution."
+       */}
+      {activeModeId === "plan" ? <PlanModeBanner /> : null}
+
+      {/* Permission / inline card slot */}
+      {aboveComposer}
+
+      {/* Context budget — now rendered inline in the composer toolbar */}
+
+      {/* Composer area */}
       <div className="relative px-6 pb-5 pt-3">
         <div className="mx-auto w-full max-w-[860px]">
           {error ? (
@@ -599,6 +785,13 @@ export function ChatPanel({
                 </div>
               </div>
               <div className="flex flex-shrink-0 items-center gap-2">
+                {/* Context ring indicator (Cursor-style) */}
+                {(() => {
+                  const budget = contextBudgetInfo?.budgetTokens ? contextBudgetInfo : liveStream?.contextBudget ? { ...liveStream.contextBudget } : undefined;
+                  const compaction = contextBudgetInfo?.compaction ?? liveStream?.compaction;
+                  const trimmed = contextBudgetInfo?.trimmed ?? (liveStream?.contextTrimmed ? liveStream.contextTrimmed : undefined);
+                  return (budget || trimmed) ? <ContextRing budget={budget} compaction={compaction} trimmed={trimmed} /> : null;
+                })()}
                 {streaming ? (
                   <button
                     type="button"

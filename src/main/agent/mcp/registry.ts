@@ -23,7 +23,7 @@ class McpManager {
   private cachedTools: Tool[] | null = null;
 
   async refreshAll(configs: McpServerConfig[]): Promise<void> {
-    const enabled = configs.filter((c) => c.enabled && c.transport === "stdio");
+    const enabled = configs.filter((c) => c.enabled);
     const want = new Set(enabled.map((c) => c.id));
     for (const id of [...this.connections.keys()]) {
       if (!want.has(id)) {

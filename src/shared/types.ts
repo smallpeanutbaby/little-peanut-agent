@@ -192,6 +192,8 @@ export interface ChatAttachment {
 export interface ChatMessageInput {
   role: ChatRole;
   content: string;
+  /** Assistant's reasoning/thinking content — passed back to APIs that require it (e.g. DeepSeek). */
+  reasoning?: string | null;
   /** Image attachments to send alongside the message (user only). */
   attachments?: ChatAttachment[];
 }
@@ -236,7 +238,8 @@ export type ChatStreamEvent =
   | { type: "text"; text: string }
   | { type: "reasoning"; text: string }
   | { type: "done"; usage?: { promptTokens?: number; completionTokens?: number } }
-  | { type: "error"; message: string; code?: string };
+  | { type: "error"; message: string; code?: string }
+  | { type: "context_trimmed"; dropped: number; originalChars: number; finalChars: number };
 
 // ─── Project & Conversation ──────────────────────────────────────────
 
@@ -513,6 +516,13 @@ export type AgentRunEvent =
       notes: string[];
     }
   | {
+      kind: "context_budget";
+      usedTokens: number;
+      budgetTokens: number;
+      windowTokens: number;
+      compacted: boolean;
+    }
+  | {
       kind: "permission_request";
       toolCallId: string;
       toolName: string;
@@ -530,10 +540,29 @@ export type AgentRunEvent =
       role: "user" | "assistant";
     }
   | {
+      kind: "stage_enter";
+      stage: "planner" | "executor" | "reviewer";
+      model: string;
+    }
+  | {
+      kind: "stage_exit";
+      stage: "planner" | "executor" | "reviewer";
+      passed?: boolean;
+    }
+  | {
       kind: "terminal";
       reason: "completed" | "cancelled" | "budget_exceeded" | "max_iterations" | "stream_error";
       message?: string;
     };
+
+export type PipelineStageRole = "planner" | "executor" | "reviewer";
+
+export interface PipelineStageConfig {
+  role: PipelineStageRole;
+  providerId: string;
+  modelId: string;
+  thinkBudget?: ThinkBudget;
+}
 
 export interface AgentStartRunInput {
   projectId: string;
@@ -551,6 +580,7 @@ export interface AgentStartRunInput {
   maxOutputTokens?: number;
   modeId?: string;
   language?: "zh-CN" | "en";
+  pipelineStages?: PipelineStageConfig[];
 }
 
 export interface AgentPermissionResponse {

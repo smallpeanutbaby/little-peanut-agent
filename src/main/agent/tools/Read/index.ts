@@ -19,28 +19,45 @@ import { z } from "zod";
 import { buildTool, blockFromText, type ToolResult, type Tool } from "../Tool.js";
 import { validateProjectPath } from "../../permissions/pathValidation.js";
 
-const inputSchema = z.object({
-  path: z
-    .string()
-    .describe(
-      "Absolute or project-relative path of the file to read. The runtime resolves relative paths against the active project root."
-    ),
-  offset: z
-    .number()
-    .int()
-    .min(1)
-    .optional()
-    .describe(
-      "1-indexed starting line. Defaults to 1. Use this together with `limit` to paginate large files; the tool refuses to read >2000 lines per call without an explicit limit."
-    ),
-  limit: z
-    .number()
-    .int()
-    .min(1)
-    .max(5000)
-    .optional()
-    .describe("Number of lines to return starting at `offset`. Defaults to 2000.")
-});
+// Many models (DeepSeek, Qwen, Kimi, …) have strong muscle memory for the
+// Claude-Code-style `file_path` field name and will use it instead of `path`
+// even though our schema documents `path`. We accept both via a preprocess
+// step that rewrites `file_path` → `path` before zod validates. The schema
+// description still teaches `path` so models that read the JSON schema do
+// the right thing first try.
+const inputSchema = z.preprocess(
+  (raw) => {
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const o = raw as Record<string, unknown>;
+      if (o.path === undefined && typeof o.file_path === "string") {
+        return { ...o, path: o.file_path };
+      }
+    }
+    return raw;
+  },
+  z.object({
+    path: z
+      .string()
+      .describe(
+        "Absolute or project-relative path of the file to read. The runtime resolves relative paths against the active project root."
+      ),
+    offset: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        "1-indexed starting line. Defaults to 1. Use this together with `limit` to paginate large files; the tool refuses to read >2000 lines per call without an explicit limit."
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(5000)
+      .optional()
+      .describe("Number of lines to return starting at `offset`. Defaults to 2000.")
+  })
+);
 
 type Input = z.infer<typeof inputSchema>;
 

@@ -376,6 +376,18 @@ const MIGRATIONS: Migration[] = [
         db.exec(`ALTER TABLE conversation ADD COLUMN last_run_ended_at INTEGER`);
       }
     }
+  },
+  {
+    version: 7,
+    description:
+      "Persist run options on conversation for crash-recovery resume.",
+    up: (db) => {
+      const cols = db.pragma(`table_info(conversation)`) as Array<{ name: string }>;
+      const have = new Set(cols.map((c) => c.name));
+      if (!have.has("last_run_options_json")) {
+        db.exec(`ALTER TABLE conversation ADD COLUMN last_run_options_json TEXT`);
+      }
+    }
   }
 ];
 

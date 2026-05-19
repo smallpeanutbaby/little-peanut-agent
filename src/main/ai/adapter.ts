@@ -33,17 +33,28 @@ function hasAnyAttachments(messages: ChatMessageInput[]): boolean {
  * Falls back to plain `content: string` when the message has no attachments
  * (preserves max compatibility with strict OpenAI-compatible servers).
  */
-export function buildOpenAiMessages(messages: ChatMessageInput[]): Array<{ role: string; content: unknown }> {
-  // Hot path: no attachments anywhere → keep simple string content for all messages.
-  if (!hasAnyAttachments(messages)) return messages.map((m) => ({ role: m.role, content: m.content }));
+export function buildOpenAiMessages(messages: ChatMessageInput[]): Array<Record<string, unknown>> {
+  const withAttachments = hasAnyAttachments(messages);
   return messages.map((m) => {
-    if (!m.attachments || m.attachments.length === 0) return { role: m.role, content: m.content };
-    const parts: Array<Record<string, unknown>> = [];
-    if (m.content) parts.push({ type: "text", text: m.content });
-    for (const att of m.attachments) {
-      parts.push({ type: "image_url", image_url: { url: att.dataUrl } });
+    const msg: Record<string, unknown> = { role: m.role };
+
+    // DeepSeek (and compatible APIs) require the assistant's reasoning_content
+    // to be passed back in multi-turn conversations.
+    if (m.role === "assistant" && m.reasoning) {
+      msg.reasoning_content = m.reasoning;
     }
-    return { role: m.role, content: parts };
+
+    if (withAttachments && m.attachments && m.attachments.length > 0) {
+      const parts: Array<Record<string, unknown>> = [];
+      if (m.content) parts.push({ type: "text", text: m.content });
+      for (const att of m.attachments) {
+        parts.push({ type: "image_url", image_url: { url: att.dataUrl } });
+      }
+      msg.content = parts;
+    } else {
+      msg.content = m.content;
+    }
+    return msg;
   });
 }
 

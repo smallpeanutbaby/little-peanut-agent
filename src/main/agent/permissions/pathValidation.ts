@@ -99,10 +99,11 @@ export async function validateProjectPath(
     }
   }
 
-  const rootReal = await safeRealpath(projectRoot);
+  const rootReal = (await safeRealpath(projectRoot)).normalize("NFC");
   const additional = await Promise.all(
-    (options.additionalWorkingDirectories ?? []).map(safeRealpath)
+    (options.additionalWorkingDirectories ?? []).map(async (d) => (await safeRealpath(d)).normalize("NFC"))
   );
+  resolved = resolved.normalize("NFC");
 
   const allowedRoots = [rootReal, ...additional].filter(Boolean) as string[];
   const inside = allowedRoots.some((root) => isInsideRoot(resolved, root));
@@ -138,14 +139,15 @@ async function safeRealpath(p: string): Promise<string> {
 }
 
 /**
- * Containment check. Uses path.relative so we don't accidentally accept
- * a sibling directory whose name starts with the root name
- * (`/foo/bar` vs `/foo/barbecue`).
+ * Containment check. Normalizes Unicode (NFC) to handle macOS NFD paths
+ * with CJK characters, then checks prefix containment.
  */
 export function isInsideRoot(target: string, root: string): boolean {
   if (!target || !root) return false;
-  const normRoot = root.endsWith(path.sep) ? root : root + path.sep;
-  if (target + path.sep === normRoot) return true;
-  if (target === root) return true;
-  return target.startsWith(normRoot);
+  const t = target.normalize("NFC");
+  const r = root.normalize("NFC");
+  const normRoot = r.endsWith(path.sep) ? r : r + path.sep;
+  if (t + path.sep === normRoot) return true;
+  if (t === r) return true;
+  return t.startsWith(normRoot);
 }

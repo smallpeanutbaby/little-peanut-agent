@@ -629,6 +629,35 @@ export class AgentStore {
     return rows;
   }
 
+  /* ── run options persistence (v7) ─────────────────────────────────── */
+
+  /** Snapshot the run-level provider/model/options so a crash-recovery
+   *  resume can reconstruct the exact same `queryLoop` params. Written
+   *  at the START of each `startRun`; cleared on discard. */
+  saveRunOptions(conversationId: string, options: Record<string, unknown>): void {
+    this.db
+      .prepare(`UPDATE conversation SET last_run_options_json = ? WHERE id = ?`)
+      .run(JSON.stringify(options), conversationId);
+  }
+
+  loadRunOptions(conversationId: string): Record<string, unknown> | null {
+    const row = this.db
+      .prepare(`SELECT last_run_options_json FROM conversation WHERE id = ?`)
+      .get(conversationId) as { last_run_options_json: string | null } | undefined;
+    if (!row?.last_run_options_json) return null;
+    try {
+      return JSON.parse(row.last_run_options_json);
+    } catch {
+      return null;
+    }
+  }
+
+  clearRunOptions(conversationId: string): void {
+    this.db
+      .prepare(`UPDATE conversation SET last_run_options_json = NULL WHERE id = ?`)
+      .run(conversationId);
+  }
+
   /* ── agent_cost_log ───────────────────────────────────────────────── */
 
   appendCostLog(input: Omit<AgentCostLogRow, "id" | "createdAt"> & { createdAt?: number }): void {

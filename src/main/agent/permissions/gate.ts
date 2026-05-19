@@ -50,6 +50,9 @@ export type PermissionAskResponse =
   | { kind: "deny" };
 
 export class PermissionGate {
+  /** When true, all permission checks return "allow" immediately. */
+  public bypassAll = false;
+
   constructor(
     private readonly store: AgentStore,
     private readonly approver: PermissionApprover
@@ -63,6 +66,11 @@ export class PermissionGate {
     scope: PermissionScopeRef & { toolCallId: string; signal: AbortSignal },
     ctxBundle: { toolCallId: string; signal: AbortSignal; conversationId: string }
   ): Promise<{ behavior: "allow"; reason?: string } | { behavior: "deny"; reason: string }> {
+    // Step 0 — bypass all checks when the user toggled "免审模式".
+    if (this.bypassAll) {
+      return { behavior: "allow", reason: "bypass mode" };
+    }
+
     // Step 1 — let the tool object weigh in.
     const initial: PermissionDecision = await tool.checkPermissions(
       input as never,
@@ -126,13 +134,14 @@ export class PermissionGate {
       return { behavior: "deny", reason: "user denied" };
     }
     if (resp.scope === "session" || resp.scope === "project") {
-      // Persist a literal rule so subsequent identical inputs auto-allow.
+      // "本会话允许" / "本项目允许" blanket-allows the entire tool
+      // so the user doesn't get re-prompted for every different input.
       this.store.insertPermissionRule({
         scope: resp.scope,
         projectId: resp.scope === "project" ? scope.projectId : null,
-        conversationId: null,
+        conversationId: resp.scope === "session" ? scope.conversationId : null,
         toolName: tool.name,
-        patternJson: JSON.stringify(literalPatternFor(tool.name, input)),
+        patternJson: JSON.stringify({ kind: "any" }),
         behavior: "allow",
         source: "user_decision"
       });

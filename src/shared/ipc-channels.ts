@@ -96,6 +96,15 @@ export const IPC = {
     listTasks: "agent:list-tasks",
     cancelTask: "agent:cancel-task",
     costSummary: "agent:cost-summary",
+    /**
+     * One-shot context budget snapshot for a conversation. Renderer
+     * calls this when switching to an existing conversation so the
+     * ContextRing has data to show BEFORE any new stream lands. Without
+     * it the ring is invisible until the user sends another message.
+     */
+    contextSnapshot: "agent:context-snapshot",
+    setBypassPermissions: "agent:set-bypass-permissions",
+    resumeRun: "agent:resume-run",
     listInterrupted: "agent:list-interrupted",
     discardInterrupted: "agent:discard-interrupted",
     /** Per-run push channel; the real name is `agent:run:${runId}`. */

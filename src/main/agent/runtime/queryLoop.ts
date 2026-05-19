@@ -42,6 +42,14 @@ import { autocompact, applyPtlFallback } from "../context/compaction.js";
 import { tokensForHistory } from "../context/tokenizer.js";
 import { modelContextFor } from "../context/modelLimits.js";
 import { estimateCostUsd } from "../cost/modelCosts.js";
+import {
+  buildLocalSummary,
+  buildPlanCompletionFooter,
+  hasCompletionMarker,
+  isPlanClarificationOnly,
+  isPlanFinalPlan,
+  shouldForcePlanClarification
+} from "./completionReport.js";
 
 export interface AgentRunParams {
   /** Logical id for this run (used by IPC events). */
@@ -98,7 +106,7 @@ export interface AgentRunParams {
   skillHints?: Array<{ name: string; source: "project" | "user"; description: string }>;
 }
 
-const DEFAULT_MAX_ITERATIONS = 12;
+const DEFAULT_MAX_ITERATIONS = 50;
 
 /**
  * Main async generator. Yields AgentEvents; resolves with no value
@@ -203,6 +211,17 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
   let accumulatedAssistantReasoning = "";
   // tool_use blocks emitted in the current turn. Reset every iteration.
   let pendingToolUses: ToolUseBlock[] = [];
+  // Persistent log of every tool call this run made, in order. Used as
+  // a deterministic FALLBACK for the wrap-up summary when the LLM
+  // summary call fails, returns empty, or the provider's stream chokes.
+  // Without this fallback the user sees a wall of tool cards and zero
+  // explanation — which has been the recurring complaint.
+  const toolRunLog: Array<{
+    name: string;
+    input: unknown;
+    ok: boolean;
+    preview: string;
+  }> = [];
 
   while (true) {
     if (params.signal.aborted) {
@@ -211,7 +230,7 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
       return;
     }
     if (iter >= maxIters) {
-      yield { kind: "terminal", reason: "max_iterations" };
+      yield { kind: "terminal", reason: "max_iterations", message: `已达到最大迭代次数 (${maxIters})，任务可能尚未完成。你可以继续发消息让 Agent 接着执行。` };
       finalizeAssistantContent(params.db, assistantMessageId, accumulatedAssistantText, accumulatedAssistantReasoning);
       return;
     }
@@ -233,7 +252,12 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
     // the model's hard context window. Both passes are pure functions
     // that return a fresh `messages` array — the on-disk transcript is
     // never mutated. The renderer keeps showing the full history.
-    const ctxInfo = modelContextFor(params.model);
+    //
+    // When think mode is on we shrink the effective promptBudget so the
+    // model has reserved space for its reasoning trace — otherwise the
+    // server is liable to truncate the tail of the response (e.g. tool
+    // arguments JSON), which we used to surface as `__parse_error` bugs.
+    const ctxInfo = modelContextFor(params.model, { thinkBudget: params.thinkBudget });
     const beforeTokens = tokensForHistory(history);
     let requestMessages = history;
     let compactionNotes: string[] = [];
@@ -250,6 +274,15 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
     if (compactionNotes.length > 0) {
       yield { kind: "context_compacted", before: beforeTokens, after: tokensForHistory(requestMessages), notes: compactionNotes };
     }
+
+    const usedTokens = tokensForHistory(requestMessages);
+    yield {
+      kind: "context_budget",
+      usedTokens,
+      budgetTokens: ctxInfo.promptBudget,
+      windowTokens: ctxInfo.contextWindow,
+      compacted: compactionNotes.length > 0
+    };
 
     const request: LlmRequest = {
       provider: params.provider,
@@ -520,11 +553,237 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
     }
 
     if (pendingToolUses.length === 0) {
+      // Wrap-up summary policy:
+      //
+      // The runtime ALWAYS owes the user a clear "I'm done — here's what I
+      // did" report once at least one tool round has run. Without this the
+      // panel just shows a wall of tool cards and nothing else (we got bug
+      // reports asking "做完事情不告诉我做了什么"). We therefore generate
+      // a summary whenever:
+      //
+      //   (a) at least one tool round has executed (iter >= 1), AND
+      //   (b) the model's own final text is shorter than a "real summary"
+      //       (< 40 chars trimmed) — e.g. it ended silently, or just said
+      //       "好的" / "ok" / "完成了" with no detail.
+      //
+      // We bail out gracefully if the summary request itself fails — the
+      // user still gets the terminal event, just without the report — but
+      // we log the reason so missing summaries are debuggable.
+      const finalText = turnText.trim();
+      const modeId = params.mode.id;
+
+      // Plan mode — hard gate: model must not skip Phase 2 on the first turn.
+      if (
+        modeId === "plan" &&
+        isPlanFinalPlan(finalText) &&
+        shouldForcePlanClarification(
+          params.db,
+          params.conversationId,
+          params.userMessage,
+          finalText,
+          modeId
+        )
+      ) {
+        let clarifyText = "";
+        const gatePrompt: CanonicalMessage = {
+          role: "user",
+          blocks: [{
+            type: "text",
+            text:
+              "【系统】你跳过了 Plan 模式的澄清阶段，直接输出了实施方案。请立即按 Phase 2 重新回答：" +
+              "只输出 `## 调研摘要` 和 `## 需要先确认`（3–6 个带 A/B/C 选项的问题）。" +
+              "禁止出现 `## 实施方案`、`## 任务理解`、`## 涉及文件清单`。"
+          }]
+        };
+        const gateReq: LlmRequest = {
+          provider: params.provider,
+          model: params.model,
+          system: systemPrompt,
+          messages: [...history, gatePrompt],
+          tools: toolSpecs.length > 0 ? toolSpecs : undefined,
+          toolChoice: "auto",
+          temperature: params.temperature,
+          thinkBudget: params.thinkBudget,
+          maxOutputTokens: 2048,
+          signal: params.signal
+        };
+        try {
+          const gateAdapter = getCanonicalAdapter(params.provider);
+          for await (const ev of gateAdapter.stream(gateReq)) {
+            yield { kind: "llm", event: ev };
+            if (ev.type === "text_delta") clarifyText += ev.text;
+          }
+        } catch (e) {
+          console.warn("[agent] plan clarify gate failed", e);
+          clarifyText =
+            "## 调研摘要\n\n（模型未按格式输出，请在下一条消息补充你的偏好。）\n\n" +
+            "## 需要先确认\n\n" +
+            "**Q1. 技术栈** 你希望用哪套前端方案？\n- 选项 A: Vite + React + Ant Design\n- 选项 B: 其他（请说明）\n\n" +
+            "**Q2. 范围** 本次要做到什么粒度？\n- 选项 A: 仅页面骨架 + mock\n- 选项 B: 含路由/布局/表单校验\n\n" +
+            "请回复你的选择（可只答部分）。若无需确认，回复「直接出方案」即可。";
+        }
+        clarifyText = clarifyText.trim();
+        accumulatedAssistantText = clarifyText;
+        if (textPartId) {
+          store.patchPartText(textPartId, clarifyText);
+        } else if (clarifyText) {
+          store.appendPart({
+            messageId: assistantMessageId,
+            seq: assistantPartSeq++,
+            type: "text",
+            toolCallId: null,
+            toolName: null,
+            inputJson: null,
+            outputJson: null,
+            outputPreview: null,
+            isError: false,
+            outputFilePath: null,
+            tokens: null,
+            textContent: clarifyText
+          });
+        }
+        finalizeAssistantContent(params.db, assistantMessageId, clarifyText, accumulatedAssistantReasoning);
+        yield { kind: "terminal", reason: "completed" };
+        return;
+      }
+
+      // Plan mode — Phase 3 final plan: append a deterministic footer so
+      // the user always sees "plan is done" (no extra LLM round).
+      if (modeId === "plan" && isPlanFinalPlan(finalText) && !isPlanClarificationOnly(finalText)) {
+        if (!hasCompletionMarker(finalText)) {
+          const footer = buildPlanCompletionFooter();
+          const toAppend = `\n\n---\n\n${footer}`;
+          accumulatedAssistantText += toAppend;
+          if (textPartId) {
+            store.patchPartText(textPartId, turnText + toAppend);
+          } else {
+            store.appendPart({
+              messageId: assistantMessageId,
+              seq: assistantPartSeq++,
+              type: "text",
+              toolCallId: null,
+              toolName: null,
+              inputJson: null,
+              outputJson: null,
+              outputPreview: null,
+              isError: false,
+              outputFilePath: null,
+              tokens: null,
+              textContent: footer
+            });
+          }
+          yield { kind: "llm", event: { type: "text_delta", text: toAppend } };
+        }
+        yield { kind: "terminal", reason: "completed" };
+        finalizeAssistantContent(params.db, assistantMessageId, accumulatedAssistantText, accumulatedAssistantReasoning);
+        return;
+      }
+
+      // Agent / pipeline-executor: generate or locally assemble a wrap-up
+      // when the model ended without a readable completion block.
+      const needsSummary =
+        modeId !== "plan" &&
+        iter >= 1 &&
+        !hasCompletionMarker(finalText) &&
+        (finalText.length < 40 ||
+          (modeId === "pipeline" && !finalText.includes("执行总结")));
+      if (needsSummary) {
+        const summaryPrompt: CanonicalMessage = {
+          role: "user",
+          blocks: [{
+            type: "text",
+            text:
+              "请用简洁的中文给我一份「任务完成报告」。务必包含：\n" +
+              "1) ✅ 我做了什么（按顺序列出关键步骤 / 调用的工具 / 涉及的文件）\n" +
+              "2) 📦 实际产出 / 修改的内容（如果有）\n" +
+              "3) ⚠️ 遇到的问题或失败（如果有，说明你怎么处理的）\n" +
+              "4) 🔜 建议的下一步（可选，1 条即可）\n\n" +
+              "格式要求：用 markdown 列表，简短直接，避免空话；不要再继续调用任何工具，直接以文字回答。"
+          }]
+        };
+        const summaryReq: LlmRequest = {
+          provider: params.provider,
+          model: params.model,
+          system: systemPrompt,
+          // Use the most-recent history (which already includes this
+          // turn's assistant + the last tool_results) so the summarizer
+          // has the full picture.
+          messages: [...history, summaryPrompt],
+          temperature: params.temperature,
+          thinkBudget: params.thinkBudget,
+          maxOutputTokens: 1024,
+          signal: params.signal
+        };
+        let summaryText = "";
+        let summaryFailReason: string | null = null;
+        try {
+          const summaryAdapter = getCanonicalAdapter(params.provider);
+          for await (const ev of summaryAdapter.stream(summaryReq)) {
+            if (ev.type === "text_delta") {
+              summaryText += ev.text;
+              yield { kind: "llm", event: ev };
+            } else if (ev.type === "error") {
+              summaryFailReason = ev.message;
+              console.warn("[agent] summary stream error:", ev.message);
+            }
+          }
+        } catch (e) {
+          summaryFailReason = (e as Error).message || String(e);
+          console.warn("[agent] summary generation failed:", summaryFailReason);
+        }
+
+        try {
+          summaryText = summaryText.trim();
+          // Local fallback: if the LLM-driven summary didn't materialize
+          // for ANY reason (network 503, empty stream, abort, provider
+          // bug), assemble one ourselves from `toolRunLog`. This is the
+          // critical guarantee — the user always gets a wrap-up.
+          if (!summaryText) {
+            summaryText = buildLocalSummary(toolRunLog, summaryFailReason);
+            if (summaryText) {
+              // Push it to the renderer as a single text_delta so the
+              // live transcript shows it just like a normal reply.
+              yield { kind: "llm", event: { type: "text_delta", text: summaryText } };
+            }
+          }
+          if (summaryText) {
+            // Append, not replace: when the model already said something
+            // (even just "好的"), keep that visible and add the structured
+            // wrap-up after a divider. When there was no prior text, the
+            // summary becomes the entire assistant reply.
+            const toAppend = finalText ? `\n\n---\n${summaryText}` : summaryText;
+            accumulatedAssistantText += toAppend;
+            if (textPartId) {
+              // turnText is what's currently persisted on this part; we
+              // patch in the appended summary so reload restores the same
+              // composed view the user just saw.
+              store.patchPartText(textPartId, turnText + toAppend);
+            } else {
+              store.appendPart({
+                messageId: assistantMessageId,
+                seq: assistantPartSeq++,
+                type: "text",
+                toolCallId: null,
+                toolName: null,
+                inputJson: null,
+                outputJson: null,
+                outputPreview: null,
+                isError: false,
+                outputFilePath: null,
+                tokens: null,
+                textContent: summaryText
+              });
+            }
+          } else {
+            console.warn("[agent] summary generation returned empty text");
+          }
+        } catch (e) {
+          console.warn("[agent] summary generation failed:", (e as Error).message);
+        }
+      }
+
       yield { kind: "terminal", reason: "completed" };
       finalizeAssistantContent(params.db, assistantMessageId, accumulatedAssistantText, accumulatedAssistantReasoning);
-      // Fire-and-forget the post-run extractMemories hook. It self-checks
-      // `isExtractMemoriesEnabled()` and returns [] when disabled, so this
-      // is essentially free unless the user opts in.
       if (params.projectId) {
         void (async () => {
           try {
@@ -597,6 +856,16 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
           preview: entry.result.preview,
           isError: entry.result.isError,
           durationMs: entry.result.durationMs
+        });
+        // Build the run log entry for the wrap-up summary. We look the
+        // tool name up from `pendingToolUses` (was patched by the
+        // tool_use_start handler) since `entry` only carries the id.
+        const matchingTu = pendingToolUses.find((tu) => tu.id === entry.toolCallId);
+        toolRunLog.push({
+          name: matchingTu?.name ?? "unknown",
+          input: matchingTu?.input ?? null,
+          ok: !entry.result.isError,
+          preview: entry.result.preview ?? ""
         });
         // Update the persisted tool_use part's preview / output so the
         // renderer can show the result card on reload.

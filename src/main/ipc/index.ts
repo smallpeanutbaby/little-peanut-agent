@@ -148,6 +148,16 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
     };
 
     void (async () => {
+      if (compressed.dropped > 0) {
+        try {
+          sender.send(channel, {
+            type: "context_trimmed",
+            dropped: compressed.dropped,
+            originalChars: compressed.originalChars,
+            finalChars: compressed.finalChars
+          } satisfies ChatStreamEvent);
+        } catch { /* renderer gone */ }
+      }
       let accumulatedText = "";
       let accumulatedReasoning = "";
       let lastError: string | null = null;
@@ -276,7 +286,11 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
   ipcMain.handle(IPC.conversations.delete, (_e, id: string) => database.deleteConversation(id));
 
   // ─── Messages ──────────────────────────────────────────────────────
-  ipcMain.handle(IPC.messages.list, (_e, conversationId: string) => database.listMessages(conversationId));
+  // Renderer-only: filter out tool_result rows (persisted as role='user'
+  // to satisfy the LLM protocol) and pipeline-stage orchestration
+  // prompts. The agent runtime still uses `database.listMessages` for
+  // the unfiltered history it sends to the model.
+  ipcMain.handle(IPC.messages.list, (_e, conversationId: string) => database.listMessagesForRenderer(conversationId));
   ipcMain.handle(IPC.messages.append, (_e, input: {
     conversationId: string;
     role: "system" | "user" | "assistant";

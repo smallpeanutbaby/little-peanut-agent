@@ -29,9 +29,9 @@ import { CHAT_MODES, CHAT_MODE_MAP, type ChatModeId } from "@shared/modes";
  *   project-flavoured modes can be added here.
  */
 const STANDALONE_CHAT_MODE_IDS = CHAT_MODES
-  .filter((m) => m.id !== "agent")
+  .filter((m) => m.id !== "agent" && m.id !== "plan" && m.id !== "pipeline")
   .map((m) => m.id) as readonly ChatModeId[];
-const PROJECT_CHAT_MODE_IDS = ["agent"] as const satisfies readonly ChatModeId[];
+const PROJECT_CHAT_MODE_IDS = ["agent", "plan", "pipeline"] as const satisfies readonly ChatModeId[];
 import { usePersistedState } from "./hooks/usePersistedState";
 import { backgroundClassMap, textClassMap } from "./constants/theme-tokens";
 import { AI_PROVIDERS_DEFAULT, type CustomProvider, type ProviderModel } from "./constants/providers";
@@ -44,6 +44,8 @@ import { AddProviderModal } from "./components/modals/AddProviderModal";
 import { ThinkConfigModal } from "./components/modals/ThinkConfigModal";
 import { AddModelModal } from "./components/modals/AddModelModal";
 import { CapabilityChips } from "./components/CapabilityChips";
+import { PipelineConfigurator } from "./components/PipelineConfigurator";
+import type { PipelineStageConfig } from "@shared/types";
 
 /**
  * True if the model exposes any form of reasoning/thinking. v4 derives this
@@ -786,10 +788,13 @@ function ModeSelector({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const { anchorRef, coords } = useAnchoredDropdown(open);
-  const active = CHAT_MODE_MAP[selectedModeId] ?? CHAT_MODE_MAP.chat;
   const visibleModes = availableModeIds
     ? CHAT_MODES.filter((m) => availableModeIds.includes(m.id))
     : CHAT_MODES;
+  const effectiveId = availableModeIds && !availableModeIds.includes(selectedModeId)
+    ? (visibleModes[0]?.id ?? "chat")
+    : selectedModeId;
+  const active = CHAT_MODE_MAP[effectiveId] ?? CHAT_MODE_MAP.chat;
 
   // Each accent maps to a small bg/border tint class set. We intentionally
   // do NOT pin a foreground colour here — the button label always uses the
@@ -835,7 +840,7 @@ function ModeSelector({
             </div>
             <div className="max-h-[420px] overflow-y-auto px-2 py-2">
               {visibleModes.map((mode) => {
-                const isActive = mode.id === selectedModeId;
+                const isActive = mode.id === effectiveId;
                 const mt = accentTints[mode.accent] ?? accentTints.slate;
                 return (
                   <button
@@ -872,6 +877,34 @@ function ModeSelector({
         document.body
       ) : null}
     </>
+  );
+}
+
+function BypassPermissionToggle({ active, onToggle }: { active: boolean; onToggle: (v: boolean) => void }) {
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(!active)}
+      title={active ? t("agent.bypassOn", "免审模式开启：所有工具自动批准") : t("agent.bypassOff", "免审模式关闭：工具需手动审批")}
+      className={`flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors ${
+        active
+          ? "bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30"
+          : "bg-[var(--lp-surface)] text-[var(--lp-muted)] hover:text-[var(--lp-text)]"
+      }`}
+    >
+      {active ? (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          <polyline points="9 12 11 14 15 10"/>
+        </svg>
+      ) : (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+      )}
+      <span>{active ? t("agent.bypassLabel", "免审") : t("agent.approvalLabel", "审批")}</span>
+    </button>
   );
 }
 
@@ -1155,16 +1188,24 @@ export function App() {
     });
     setPermissionQueue((prev) => prev.filter((p) => p.toolCallId !== req.toolCallId));
   }, []);
-  const denyAllPermissions = useCallback(() => {
+  /**
+   * Deny every pending permission request for a given conversation.
+   * Scoped to a single conversation so the modal's "拒绝全部" button
+   * doesn't reach across into sibling conversations of the same
+   * project (which used to be possible when the queue was global).
+   */
+  const denyAllPermissionsForConversation = useCallback((conversationId: string) => {
     setPermissionQueue((prev) => {
-      for (const req of prev) {
+      const denied = prev.filter((p) => p.conversationId === conversationId);
+      const kept = prev.filter((p) => p.conversationId !== conversationId);
+      for (const req of denied) {
         void window.electronAPI?.answerAgentPermission?.({
           runId: req.runId,
           toolCallId: req.toolCallId,
           decision: "deny"
         });
       }
-      return [];
+      return kept;
     });
   }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1195,6 +1236,15 @@ export function App() {
    */
   const [chatThinkEnabled, setChatThinkEnabled] = usePersistedState<boolean>("chat.thinkEnabled", true);
   const [chatModeId, setChatModeId] = usePersistedState<ChatModeId>("chat.modeId", "chat");
+  const [bypassPermissions, setBypassPermissions] = useState(false);
+  const [pipelineStages, setPipelineStages] = usePersistedState<PipelineStageConfig[]>(
+    "pipeline.stages",
+    [
+      { role: "planner",  providerId: AI_PROVIDERS_DEFAULT[0]?.id ?? "", modelId: AI_PROVIDERS_DEFAULT[0]?.models[0]?.id ?? "" },
+      { role: "executor", providerId: AI_PROVIDERS_DEFAULT[0]?.id ?? "", modelId: AI_PROVIDERS_DEFAULT[0]?.models[0]?.id ?? "" },
+      { role: "reviewer", providerId: AI_PROVIDERS_DEFAULT[0]?.id ?? "", modelId: AI_PROVIDERS_DEFAULT[0]?.models[0]?.id ?? "" }
+    ]
+  );
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [providerCache, setProviderCache] = useState<Record<string, ProviderConfig>>({});
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -1229,16 +1279,34 @@ export function App() {
     assistantMessageId: string;
     text: string;
     reasoning: string;
-    status: "streaming" | "done" | "error";
+    status: "streaming" | "done" | "error" | "loading";
     errorMessage?: string;
     startedAt: number;
     /** When true the `streamId` is an agent runId — cancel via
      *  `cancelAgentRun` instead of `cancelChatStream`. */
     isAgentRun?: boolean;
+    /** Last context compaction notice from agent runtime. */
+    compaction?: { before: number; after: number; notes: string[] };
+    /** Current context budget utilization from agent runtime. */
+    contextBudget?: { usedTokens: number; budgetTokens: number; windowTokens: number; compacted: boolean };
+    /** Non-agent chat: signals old messages were dropped to fit context. */
+    contextTrimmed?: { dropped: number; originalChars: number; finalChars: number };
+    /** Pipeline stage tracking. */
+    pipelineStage?: { stage: "planner" | "executor" | "reviewer"; model: string } | null;
   };
   const [activeStreams, setActiveStreams] = useState<Record<string, StreamState>>({});
   const activeStreamsRef = useRef(activeStreams);
   activeStreamsRef.current = activeStreams;
+
+  type ContextBudgetInfo = {
+    usedTokens: number;
+    budgetTokens: number;
+    windowTokens: number;
+    compacted: boolean;
+    compaction?: { before: number; after: number; notes: string[] };
+    trimmed?: { dropped: number; originalChars: number; finalChars: number };
+  };
+  const [contextBudgets, setContextBudgets] = useState<Record<string, ContextBudgetInfo>>({});
 
   /**
    * Guarded conversation setter. Two jobs:
@@ -1345,7 +1413,9 @@ export function App() {
     // `message_part` rows. v0 limitation: retries on agent runs simply
     // re-send the last user text rather than reusing message ids.
     if (
-      params.modeId === "agent" &&
+      (params.modeId === "agent" ||
+        params.modeId === "plan" ||
+        params.modeId === "pipeline") &&
       params.conversation.projectId &&
       api.startAgentRun &&
       api.onAgentRun
@@ -1375,7 +1445,8 @@ export function App() {
           thinkBudget: params.thinkBudget,
           thinkProtocol,
           modeId: params.modeId,
-          language: i18n.language === "en" ? "en" : "zh-CN"
+          language: i18n.language === "en" ? "en" : "zh-CN",
+          ...(params.modeId === "pipeline" ? { pipelineStages } : {})
         });
       } catch (e) {
         return { ok: false, reason: "send-failed", message: (e as Error).message };
@@ -1396,15 +1467,20 @@ export function App() {
       }));
       const unsubscribe = api.onAgentRun(started.runId, (ev) => {
         // Permission requests get pushed into the global queue; the
-        // PermissionApprovalModal renders the front element.
+        // PermissionApprovalModal renders the front element FOR THE
+        // CURRENTLY ACTIVE CONVERSATION ONLY (see filter at render
+        // site). Tagging each request with `convId` is what keeps the
+        // prompt from leaking into sibling conversations of the same
+        // project — that was the "你好/你是什么模型 both showing
+        // ListDir" bug.
         if (ev.kind === "permission_request") {
           setPermissionQueue((prev) => {
-            // De-dup by toolCallId in case the main process re-emits.
             if (prev.some((p) => p.toolCallId === ev.toolCallId)) return prev;
             return [
               ...prev,
               {
                 runId: started.runId,
+                conversationId: convId,
                 toolCallId: ev.toolCallId,
                 toolName: ev.toolName,
                 input: ev.input,
@@ -1433,18 +1509,43 @@ export function App() {
               return { ...prev, [convId]: { ...cur, status: "error", errorMessage: e.message } };
             }
           }
+          if (ev.kind === "context_compacted") {
+            return { ...prev, [convId]: { ...cur, compaction: { before: ev.before, after: ev.after, notes: ev.notes } } };
+          }
+          if (ev.kind === "context_budget") {
+            return { ...prev, [convId]: { ...cur, contextBudget: { usedTokens: ev.usedTokens, budgetTokens: ev.budgetTokens, windowTokens: ev.windowTokens, compacted: ev.compacted } } };
+          }
+          if (ev.kind === "stage_enter") {
+            return { ...prev, [convId]: { ...cur, pipelineStage: { stage: ev.stage, model: ev.model } } };
+          }
+          if (ev.kind === "stage_exit") {
+            return { ...prev, [convId]: { ...cur, pipelineStage: null } };
+          }
           if (ev.kind === "terminal") {
             return {
               ...prev,
               [convId]: {
                 ...cur,
                 status: ev.reason === "completed" ? "done" : "error",
-                errorMessage: ev.reason === "completed" ? undefined : ev.message ?? ev.reason
+                errorMessage: ev.reason === "completed" ? undefined : ev.message ?? ev.reason,
+                pipelineStage: null
               }
             };
           }
           return prev;
         });
+        if (ev.kind === "context_compacted") {
+          setContextBudgets((prev) => ({
+            ...prev,
+            [convId]: { ...prev[convId], usedTokens: ev.after, budgetTokens: prev[convId]?.budgetTokens ?? 0, windowTokens: prev[convId]?.windowTokens ?? 0, compacted: true, compaction: { before: ev.before, after: ev.after, notes: ev.notes } }
+          }));
+        }
+        if (ev.kind === "context_budget") {
+          setContextBudgets((prev) => ({
+            ...prev,
+            [convId]: { ...prev[convId], usedTokens: ev.usedTokens, budgetTokens: ev.budgetTokens, windowTokens: ev.windowTokens, compacted: ev.compacted, compaction: prev[convId]?.compaction }
+          }));
+        }
         if (ev.kind === "message_persisted") {
           void refreshConversations();
         }
@@ -1512,7 +1613,7 @@ export function App() {
     const contextMessages = persistedMessages
       .filter((m) => m.id !== placeholderAssistant.id)
       .filter((m) => (m.content ?? "").trim().length > 0 || (m.attachments && m.attachments.length > 0))
-      .map((m) => ({ role: m.role, content: m.content, attachments: m.attachments }));
+      .map((m) => ({ role: m.role, content: m.content, reasoning: m.reasoning, attachments: m.attachments }));
 
     // Resolve the model's reasoning protocol from the catalog so the adapter
     // can map thinkBudget → reasoning_effort / budget_tokens / thinkingBudget
@@ -1612,8 +1713,17 @@ export function App() {
         if (ev.type === "done") {
           return { ...prev, [convId]: { ...cur, status: "done" } };
         }
+        if (ev.type === "context_trimmed") {
+          return { ...prev, [convId]: { ...cur, contextTrimmed: { dropped: ev.dropped, originalChars: ev.originalChars, finalChars: ev.finalChars } } };
+        }
         return prev;
       });
+      if (ev.type === "context_trimmed") {
+        setContextBudgets((prev) => ({
+          ...prev,
+          [convId]: { ...prev[convId], usedTokens: 0, budgetTokens: 0, windowTokens: 0, compacted: false, trimmed: { dropped: ev.dropped, originalChars: ev.originalChars, finalChars: ev.finalChars } }
+        }));
+      }
       if (ev.type === "done" || ev.type === "error") {
         finalize();
       }
@@ -1640,6 +1750,11 @@ export function App() {
       }
       return next;
     });
+  }, []);
+
+  const toggleBypassPermissions = useCallback((next: boolean) => {
+    setBypassPermissions(next);
+    void window.electronAPI?.setBypassPermissions?.(next);
   }, []);
 
   /**
@@ -1670,6 +1785,42 @@ export function App() {
     });
   }, [startChatStream, chatProvider, chatModel, chatThinkBudget, chatThinkEnabled, chatModeId]);
 
+  /**
+   * "Execute as Agent" handoff: invoked when the user clicks the button at
+   * the end of a plan-mode assistant reply. Flips the conversation's mode
+   * to "agent", persists that, and immediately dispatches a new user
+   * message containing the plan as the first instruction the Agent sees.
+   *
+   * The mode flip is persisted so subsequent messages in the same
+   * conversation default to Agent — the user only commits once.
+   */
+  const executePlanAsAgent = useCallback(async (planText: string) => {
+    const conv = activeConversation;
+    if (!conv) return;
+    if (!window.electronAPI?.updateConversation) return;
+    const updated = await window.electronAPI.updateConversation(conv.id, { modeId: "agent" });
+    const effective = updated ?? { ...conv, modeId: "agent" };
+    if (updated) setActiveConversation(updated);
+    await refreshConversations();
+    await startChatStream({
+      conversation: effective,
+      userText: `请按下面的计划执行：\n\n${planText}`,
+      providerId: effective.providerId ?? chatProvider,
+      modelId: effective.modelId ?? chatModel,
+      thinkBudget: (effective.thinkBudget as ThinkBudget) ?? chatThinkBudget,
+      thinkEnabled: effective.thinkEnabled ?? chatThinkEnabled,
+      modeId: "agent"
+    });
+  }, [
+    activeConversation,
+    refreshConversations,
+    startChatStream,
+    chatProvider,
+    chatModel,
+    chatThinkBudget,
+    chatThinkEnabled
+  ]);
+
   useEffect(() => { void refreshConversations(); }, [refreshConversations]);
   useEffect(() => { void refreshProjects(); }, [refreshProjects]);
 
@@ -1693,8 +1844,6 @@ export function App() {
       .find((p) => p.id === chatProvider)?.models
       .find((m) => m.id === chatModel);
     const seedThinkEnabled = hasReasoning(modelDef) && chatThinkEnabled;
-    // Default to "agent" mode for project-bound conversations; standalone
-    // conversations inherit whatever the user has globally selected.
     const seedModeId: ChatModeId = projectId ? "agent" : chatModeId;
     const conv = await api.createConversation({
       projectId,
@@ -1890,6 +2039,78 @@ export function App() {
   }, [activeConversation, setChatModeId]);
 
   /**
+   * Context-budget snapshot on conversation load.
+   *
+   * Before this effect existed, the `ContextRing` indicator stayed
+   * invisible until the user sent ANOTHER message — the budget data
+   * only landed via the `context_budget` stream event mid-turn. When
+   * users opened an existing conversation, the ring just wasn't there.
+   *
+   * Now: every time a conversation becomes active (or the user changes
+   * model / think settings while inside one), we ask the main process
+   * for a one-shot snapshot of `(used, budget, window)` based on the
+   * persisted history. We skip if a stream is in flight for this
+   * conversation — the live stream's own `context_budget` event is the
+   * source of truth in that case.
+   */
+  useEffect(() => {
+    const convId = activeConversation?.id;
+    if (!convId) return;
+    if (activeStreamsRef.current[convId]?.status === "streaming") return;
+
+    const effectiveModel = activeConversation.modelId ?? chatModel;
+    const effectiveThinkBudget: ThinkBudget = activeConversation.thinkBudget
+      ? (activeConversation.thinkBudget as ThinkBudget)
+      : chatThinkBudget;
+    const effectiveThinkEnabled =
+      activeConversation.thinkEnabled ?? chatThinkEnabled;
+    const snapshotThinkBudget: ThinkBudget = effectiveThinkEnabled
+      ? effectiveThinkBudget
+      : "none";
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await window.electronAPI.agentContextSnapshot({
+          conversationId: convId,
+          model: effectiveModel,
+          thinkBudget: snapshotThinkBudget
+        });
+        if (cancelled) return;
+        setContextBudgets((prev) => {
+          // Preserve any existing `trimmed` / `compaction` data — those
+          // came from real stream events and are more authoritative than
+          // a fresh estimate.
+          const existing = prev[convId];
+          return {
+            ...prev,
+            [convId]: {
+              ...existing,
+              usedTokens: snap.usedTokens,
+              budgetTokens: snap.budgetTokens,
+              windowTokens: snap.windowTokens,
+              compacted: existing?.compacted ?? snap.compacted
+            }
+          };
+        });
+      } catch (e) {
+        console.warn("[lp/context-snapshot] failed:", e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeConversation?.id,
+    activeConversation?.modelId,
+    activeConversation?.thinkBudget,
+    activeConversation?.thinkEnabled,
+    chatModel,
+    chatThinkBudget,
+    chatThinkEnabled
+  ]);
+
+  /**
    * Tracer: log every transition of `activeConversation`. Helps catch the
    * elusive "mid-stream jump back to new-conversation hero" bug — the log
    * line will show whether a stream was in flight at the moment of the
@@ -2046,8 +2267,14 @@ export function App() {
           <nav className="mt-2 flex flex-col gap-0.5">
             <button
               type="button"
-              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[14px] transition hover:bg-white/[0.04] ${activePage === "chat" ? "bg-white/[0.06] text-[var(--lp-text)]" : "text-[var(--lp-text)]/82"}`}
-              onClick={() => setActivePage("chat")}
+              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-[14px] transition hover:bg-white/[0.04] ${activePage === "chat" && !activeConversation ? "bg-white/[0.06] text-[var(--lp-text)]" : "text-[var(--lp-text)]/82"}`}
+              onClick={() => {
+                setActiveConversation(null);
+                setActivePage("chat");
+                if (!STANDALONE_CHAT_MODE_IDS.includes(chatModeId)) {
+                  setChatModeId("chat");
+                }
+              }}
             >
               <span className="inline-flex h-5 w-5 items-center justify-center text-[15px] text-[var(--lp-text)]/72">💬</span>
               <span>{t("sidebar.chatMode")}</span>
@@ -2400,13 +2627,7 @@ export function App() {
                   ? (activeProject?.name ?? t("sidebar.projects"))
                   : t("sidebar.modelConfig")}
             </div>
-            <div
-              className="flex items-center gap-2 text-[var(--lp-soft-text)]"
-              style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-            >
-              <button className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.05]" title={t("sidebar2.securityTitle")}>🛡</button>
-              <button className="flex h-8 w-8 items-center justify-center rounded-full hover:bg-white/[0.05]" title={t("sidebar.help")}>❓</button>
-            </div>
+            {/* Reserved for future header actions */}
           </header>
 
           {activePage === "chat" ? (
@@ -2428,7 +2649,11 @@ export function App() {
               })()}
               defaultThinkBudget={chatThinkBudget}
               defaultThinkEnabled={chatThinkEnabled}
-              activeModeId={chatModeId}
+              activeModeId={
+                activeConversation?.projectId
+                  ? ((activeConversation.modeId as string) ?? "agent")
+                  : chatModeId
+              }
               liveStream={(() => {
                 if (!activeConversation) return undefined;
                 const s = activeStreams[activeConversation.id];
@@ -2441,6 +2666,7 @@ export function App() {
               onStartStream={startChatStream}
               onCancelStream={cancelChatStream}
               onRetryStream={retryChatStream}
+              onExecuteAsAgent={executePlanAsAgent}
               labels={{
                 heroTitle: t("home.heroTitle"),
                 heroSubtitle: t("home.heroSubtitle"),
@@ -2459,11 +2685,8 @@ export function App() {
               }}
               toolbar={
                 <>
-                  {/* Project conversations are locked to Agent mode (only that
-                      mode shows in the dropdown). The global "对话" page keeps
-                      every non-Agent mode. */}
                   <ModeSelector
-                    selectedModeId={activeConversation?.projectId ? "agent" : chatModeId}
+                    selectedModeId={activeConversation?.projectId ? ((activeConversation.modeId as ChatModeId) ?? "agent") : chatModeId}
                     availableModeIds={
                       activeConversation?.projectId
                         ? PROJECT_CHAT_MODE_IDS
@@ -2472,8 +2695,6 @@ export function App() {
                     onChange={(id) => {
                       const conv = activeConversation;
                       if (conv?.projectId) {
-                        // No-op for project chats: Agent is the only option,
-                        // but persist defensively in case stale state slipped in.
                         if (conv && window.electronAPI?.updateConversation) {
                           void window.electronAPI.updateConversation(conv.id, { modeId: id }).then((updated) => {
                             if (updated) setActiveConversation(updated);
@@ -2489,36 +2710,64 @@ export function App() {
                       }
                     }}
                   />
-                  <ModelSelector
-                    selectedProvider={chatProvider}
-                    selectedModel={chatModel}
-                    thinkBudget={chatThinkBudget}
-                    thinkEnabled={chatThinkEnabled}
-                    onChangeProvider={setChatProvider}
-                    onChangeModel={setChatModel}
-                    onChangeBudget={(b) => {
-                      setChatThinkBudget(b);
-                      // Mirror onto the active conversation so a reload restores it.
-                      const conv = activeConversation;
-                      if (conv && window.electronAPI?.updateConversation) {
-                        void window.electronAPI.updateConversation(conv.id, { thinkBudget: b }).then((updated) => {
-                          if (updated) setActiveConversation(updated);
-                        });
-                      }
-                    }}
-                    onChangeThinkEnabled={(next) => {
-                      setChatThinkEnabled(next);
-                      const conv = activeConversation;
-                      if (conv && window.electronAPI?.updateConversation) {
-                        void window.electronAPI.updateConversation(conv.id, { thinkEnabled: next }).then((updated) => {
-                          if (updated) setActiveConversation(updated);
-                        });
-                      }
-                    }}
-                    providerConfigs={providerCache}
-                  />
+                  {activeConversation?.modeId === "pipeline" ? (
+                    <PipelineConfigurator
+                      stages={pipelineStages}
+                      onChange={setPipelineStages}
+                      providerConfigs={providerCache}
+                    />
+                  ) : (
+                    <ModelSelector
+                      selectedProvider={chatProvider}
+                      selectedModel={chatModel}
+                      thinkBudget={chatThinkBudget}
+                      thinkEnabled={chatThinkEnabled}
+                      onChangeProvider={setChatProvider}
+                      onChangeModel={setChatModel}
+                      onChangeBudget={(b) => {
+                        setChatThinkBudget(b);
+                        const conv = activeConversation;
+                        if (conv && window.electronAPI?.updateConversation) {
+                          void window.electronAPI.updateConversation(conv.id, { thinkBudget: b }).then((updated) => {
+                            if (updated) setActiveConversation(updated);
+                          });
+                        }
+                      }}
+                      onChangeThinkEnabled={(next) => {
+                        setChatThinkEnabled(next);
+                        const conv = activeConversation;
+                        if (conv && window.electronAPI?.updateConversation) {
+                          void window.electronAPI.updateConversation(conv.id, { thinkEnabled: next }).then((updated) => {
+                            if (updated) setActiveConversation(updated);
+                          });
+                        }
+                      }}
+                      providerConfigs={providerCache}
+                    />
+                  )}
+                  {activeConversation?.projectId && (
+                    <BypassPermissionToggle active={bypassPermissions} onToggle={toggleBypassPermissions} />
+                  )}
                 </>
               }
+              aboveComposer={(() => {
+                // Only show the permission card for the conversation
+                // that triggered it. The global queue used to leak
+                // prompts into sibling conversations of the same
+                // project — visually identical UI in two tabs, both
+                // pretending the tool was theirs.
+                const convScopedQueue = activeConversation
+                  ? permissionQueue.filter((p) => p.conversationId === activeConversation.id)
+                  : [];
+                return convScopedQueue.length > 0 && activeConversation ? (
+                  <PermissionApprovalModal
+                    queue={convScopedQueue}
+                    onDecide={decidePermission}
+                    onDenyAll={() => denyAllPermissionsForConversation(activeConversation.id)}
+                  />
+                ) : null;
+              })()}
+              contextBudgetInfo={activeConversation ? contextBudgets[activeConversation.id] : undefined}
             />
           ) : activePage === "project" && activeProject ? (
             <ProjectLandingPanel
@@ -2536,7 +2785,6 @@ export function App() {
                   .find((p) => p.id === chatProvider)?.models
                   .find((m) => m.id === chatModel);
                 const seedThinkEnabled = hasReasoning(modelDef) && chatThinkEnabled;
-                // Project-bound conversations always start in Agent mode.
                 const conv = await api.createConversation({
                   projectId: activeProject.id,
                   name: t("sidebar.newConversation"),
@@ -2561,11 +2809,8 @@ export function App() {
               }}
               toolbar={
                 <>
-                  {/* Project landing is locked to Agent. We still render the
-                      selector (instead of a static badge) so the visual rhythm
-                      with the model picker matches the standalone chat. */}
                   <ModeSelector
-                    selectedModeId="agent"
+                    selectedModeId={(projectDraftConversation?.modeId as ChatModeId) ?? "agent"}
                     availableModeIds={PROJECT_CHAT_MODE_IDS}
                     onChange={(id) => {
                       const conv = projectDraftConversation;
@@ -2576,33 +2821,42 @@ export function App() {
                       }
                     }}
                   />
-                  <ModelSelector
-                    selectedProvider={chatProvider}
-                    selectedModel={chatModel}
-                    thinkBudget={chatThinkBudget}
-                    thinkEnabled={chatThinkEnabled}
-                    onChangeProvider={setChatProvider}
-                    onChangeModel={setChatModel}
-                    onChangeBudget={(b) => {
-                      setChatThinkBudget(b);
-                      const conv = projectDraftConversation;
-                      if (conv && window.electronAPI?.updateConversation) {
-                        void window.electronAPI.updateConversation(conv.id, { thinkBudget: b }).then((updated) => {
-                          if (updated) setProjectDraftConversation(updated);
-                        });
-                      }
-                    }}
-                    onChangeThinkEnabled={(next) => {
-                      setChatThinkEnabled(next);
-                      const conv = projectDraftConversation;
-                      if (conv && window.electronAPI?.updateConversation) {
-                        void window.electronAPI.updateConversation(conv.id, { thinkEnabled: next }).then((updated) => {
-                          if (updated) setProjectDraftConversation(updated);
-                        });
-                      }
-                    }}
-                    providerConfigs={providerCache}
-                  />
+                  {(projectDraftConversation?.modeId === "pipeline") ? (
+                    <PipelineConfigurator
+                      stages={pipelineStages}
+                      onChange={setPipelineStages}
+                      providerConfigs={providerCache}
+                    />
+                  ) : (
+                    <ModelSelector
+                      selectedProvider={chatProvider}
+                      selectedModel={chatModel}
+                      thinkBudget={chatThinkBudget}
+                      thinkEnabled={chatThinkEnabled}
+                      onChangeProvider={setChatProvider}
+                      onChangeModel={setChatModel}
+                      onChangeBudget={(b) => {
+                        setChatThinkBudget(b);
+                        const conv = projectDraftConversation;
+                        if (conv && window.electronAPI?.updateConversation) {
+                          void window.electronAPI.updateConversation(conv.id, { thinkBudget: b }).then((updated) => {
+                            if (updated) setProjectDraftConversation(updated);
+                          });
+                        }
+                      }}
+                      onChangeThinkEnabled={(next) => {
+                        setChatThinkEnabled(next);
+                        const conv = projectDraftConversation;
+                        if (conv && window.electronAPI?.updateConversation) {
+                          void window.electronAPI.updateConversation(conv.id, { thinkEnabled: next }).then((updated) => {
+                            if (updated) setProjectDraftConversation(updated);
+                          });
+                        }
+                      }}
+                      providerConfigs={providerCache}
+                    />
+                  )}
+                  <BypassPermissionToggle active={bypassPermissions} onToggle={toggleBypassPermissions} />
                 </>
               }
             />
@@ -2627,22 +2881,103 @@ export function App() {
         <SettingsPage onClose={() => setSettingsOpen(false)} appVersion={appInfo?.version} />
       ) : null}
 
-      <PermissionApprovalModal
-        queue={permissionQueue}
-        onDecide={decidePermission}
-        onDenyAll={denyAllPermissions}
-      />
+      {/* PermissionApprovalModal is now rendered inline via ChatPanel.aboveComposer */}
 
       {activeConversation?.projectId ? <RunningTasksTray projectId={activeConversation.projectId} /> : null}
 
       <ResumeToast
         onOpenConversation={(convId) => {
-          // Best-effort: select the conversation by id. We rely on
-          // existing conversation lookup logic — if the conversation
-          // isn't in the sidebar's current list we still try to set
-          // the active id; the loader will reconcile.
           const conv = conversations.find((c) => c.id === convId);
           if (conv) setActiveConversationSafe(conv);
+        }}
+        onResumeRun={(convId, runId) => {
+          const conv = conversations.find((c) => c.id === convId);
+          if (conv) {
+            setActiveConversationSafe(conv);
+            setActivePage("chat");
+          }
+
+          setActiveStreams((prev) => ({
+            ...prev,
+            [convId]: {
+              streamId: runId,
+              assistantMessageId: "",
+              text: "",
+              reasoning: "",
+              status: "streaming",
+              startedAt: Date.now(),
+              isAgentRun: true
+            }
+          }));
+
+          const api = window.electronAPI;
+          if (!api?.onAgentRun) return;
+          const unsubscribe = api.onAgentRun(runId, (ev) => {
+            if (ev.kind === "permission_request") {
+              setPermissionQueue((prev) => {
+                if (prev.some((p) => p.toolCallId === ev.toolCallId)) return prev;
+                return [
+                  ...prev,
+                  {
+                    runId,
+                    conversationId: convId,
+                    toolCallId: ev.toolCallId,
+                    toolName: ev.toolName,
+                    input: ev.input,
+                    uiPreview: ev.uiPreview
+                  }
+                ];
+              });
+            }
+            if (ev.kind === "terminal") {
+              setPermissionQueue((prev) => prev.filter((p) => p.runId !== runId));
+            }
+            setActiveStreams((prev) => {
+              const cur = prev[convId];
+              if (!cur) return prev;
+              if (ev.kind === "llm") {
+                const e = ev.event;
+                if (e.type === "text_delta") return { ...prev, [convId]: { ...cur, text: cur.text + e.text } };
+                if (e.type === "reasoning_delta") return { ...prev, [convId]: { ...cur, reasoning: cur.reasoning + e.text } };
+                if (e.type === "error") return { ...prev, [convId]: { ...cur, status: "error", errorMessage: e.message } };
+              }
+              if (ev.kind === "context_compacted") {
+                return { ...prev, [convId]: { ...cur, compaction: { before: ev.before, after: ev.after, notes: ev.notes } } };
+              }
+              if (ev.kind === "context_budget") {
+                return { ...prev, [convId]: { ...cur, contextBudget: { usedTokens: ev.usedTokens, budgetTokens: ev.budgetTokens, windowTokens: ev.windowTokens, compacted: ev.compacted } } };
+              }
+              if (ev.kind === "stage_enter") {
+                return { ...prev, [convId]: { ...cur, pipelineStage: { stage: ev.stage, model: ev.model } } };
+              }
+              if (ev.kind === "stage_exit") {
+                return { ...prev, [convId]: { ...cur, pipelineStage: null } };
+              }
+              if (ev.kind === "terminal") {
+                return { ...prev, [convId]: { ...cur, status: ev.reason === "completed" ? "done" : "error", errorMessage: ev.reason === "completed" ? undefined : ev.message ?? ev.reason, pipelineStage: null } };
+              }
+              return prev;
+            });
+            if (ev.kind === "context_compacted") {
+              setContextBudgets((prev) => ({
+                ...prev,
+                [convId]: { ...prev[convId], usedTokens: ev.after, budgetTokens: prev[convId]?.budgetTokens ?? 0, windowTokens: prev[convId]?.windowTokens ?? 0, compacted: true, compaction: { before: ev.before, after: ev.after, notes: ev.notes } }
+              }));
+            }
+            if (ev.kind === "context_budget") {
+              setContextBudgets((prev) => ({
+                ...prev,
+                [convId]: { ...prev[convId], usedTokens: ev.usedTokens, budgetTokens: ev.budgetTokens, windowTokens: ev.windowTokens, compacted: ev.compacted, compaction: prev[convId]?.compaction }
+              }));
+            }
+            if (ev.kind === "message_persisted") void refreshConversations();
+            if (ev.kind === "terminal") {
+              const dispose = streamUnsubsRef.current[convId];
+              if (dispose) { dispose(); delete streamUnsubsRef.current[convId]; }
+              void refreshConversations();
+            }
+          });
+          streamUnsubsRef.current[convId] = unsubscribe;
         }}
       />
     </div>

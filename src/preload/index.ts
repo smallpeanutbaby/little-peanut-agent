@@ -220,12 +220,27 @@ const electronAPI = {
       completionTokens: number;
       costUsd: number;
     }>,
+  agentContextSnapshot: (input: {
+    conversationId: string;
+    model: string;
+    thinkBudget?: import("@shared/types.js").ThinkBudget;
+  }) =>
+    ipcRenderer.invoke(IPC.agent.contextSnapshot, input) as Promise<{
+      usedTokens: number;
+      budgetTokens: number;
+      windowTokens: number;
+      compacted: boolean;
+    }>,
   listInterruptedConversations: () =>
     ipcRenderer.invoke(IPC.agent.listInterrupted) as Promise<
       Array<{ id: string; name: string | null; projectId: string | null; lastRunId: string | null; lastRunStartedAt: number | null }>
     >,
   discardInterruptedConversation: (conversationId: string) =>
-    ipcRenderer.invoke(IPC.agent.discardInterrupted, conversationId) as Promise<void>
+    ipcRenderer.invoke(IPC.agent.discardInterrupted, conversationId) as Promise<void>,
+  resumeAgentRun: (conversationId: string) =>
+    ipcRenderer.invoke(IPC.agent.resumeRun, conversationId) as Promise<{ runId: string }>,
+  setBypassPermissions: (bypass: boolean) =>
+    ipcRenderer.invoke(IPC.agent.setBypassPermissions, bypass) as Promise<void>
 };
 
 contextBridge.exposeInMainWorld("electronAPI", electronAPI);

@@ -19,6 +19,11 @@ interface RunningTasksTrayProps {
 
 const POLL_MS = 1500;
 const ACTIVE_STATUSES = new Set<AgentTaskItem["status"]>(["pending", "running"]);
+// Hide completed/failed/killed tasks from the tray once they're older
+// than this. Without this, a finished subagent card sticks around
+// forever and looks like it's still in flight — confusingly so when
+// the age clock keeps ticking from `startedAt`.
+const FINISHED_TTL_MS = 60_000;
 
 export function RunningTasksTray({ projectId }: RunningTasksTrayProps) {
   const { t } = useTranslation();
@@ -50,7 +55,20 @@ export function RunningTasksTray({ projectId }: RunningTasksTrayProps) {
 
   const running = useMemo(() => tasks.filter((t) => ACTIVE_STATUSES.has(t.status)), [tasks]);
 
-  if (tasks.length === 0) return null;
+  // Visible set = all active tasks + any finished task that ended in
+  // the last FINISHED_TTL_MS. Older completed/failed/killed rows stay
+  // in the DB (we still want them for postmortems via a future "task
+  // history" view) but disappear from the tray.
+  const visible = useMemo(() => {
+    const now = Date.now();
+    return tasks.filter((t) => {
+      if (ACTIVE_STATUSES.has(t.status)) return true;
+      if (t.endedAt && now - t.endedAt < FINISHED_TTL_MS) return true;
+      return false;
+    });
+  }, [tasks]);
+
+  if (visible.length === 0) return null;
 
   const cancel = async (id: string) => {
     await window.electronAPI?.cancelAgentTask?.(id);
@@ -69,26 +87,39 @@ export function RunningTasksTray({ projectId }: RunningTasksTrayProps) {
           {t("tasksTray.title", { defaultValue: "Subagents" })}
         </span>
         <span className="ml-auto text-[12px] text-[var(--lp-soft-text)]">
-          {running.length} / {tasks.length}
+          {running.length} / {visible.length}
         </span>
         <span className="ml-1 text-[12px] text-[var(--lp-muted)]">{open ? "▾" : "▸"}</span>
       </button>
       {open ? (
         <ul className="max-h-[40vh] space-y-1 overflow-y-auto border-t border-white/6 px-3 py-2">
-          {tasks.map((task) => {
+          {visible.map((task) => {
             const payload = safeParse(task.payloadJson) as { description?: string; prompt?: string } | null;
             const result = task.resultJson ? (safeParse(task.resultJson) as { summary?: string; errorMessage?: string } | null) : null;
+            const active = ACTIVE_STATUSES.has(task.status);
+            // For finished tasks show the run duration ("8s") instead
+            // of the wall-clock age since startedAt, otherwise a
+            // completed-10-minutes-ago task looks like it's been
+            // running for 10 minutes.
+            const ageLabel = active
+              ? prettyAge(task.startedAt)
+              : task.endedAt
+                ? `${prettyDuration(task.endedAt - task.startedAt)} · ${labelFor(task.status, t)}`
+                : labelFor(task.status, t);
             return (
               <li
                 key={task.id}
-                className="rounded-lg border border-[var(--lp-border)] bg-white/[0.025] px-3 py-2"
+                className={
+                  "rounded-lg border border-[var(--lp-border)] bg-white/[0.025] px-3 py-2 transition " +
+                  (active ? "" : "opacity-60")
+                }
               >
                 <div className="flex items-center gap-2">
                   <StatusDot status={task.status} />
                   <span className="truncate text-[12.5px] text-[var(--lp-text)]">
                     {payload?.description ?? task.type}
                   </span>
-                  <span className="ml-auto text-[11px] text-[var(--lp-muted)]">{prettyAge(task.startedAt)}</span>
+                  <span className="ml-auto text-[11px] text-[var(--lp-muted)]">{ageLabel}</span>
                 </div>
                 {payload?.prompt ? (
                   <div className="mt-1 truncate text-[11.5px] text-[var(--lp-soft-text)]" title={payload.prompt}>
@@ -133,10 +164,21 @@ function StatusDot({ status }: { status: AgentTaskItem["status"] }) {
 }
 
 function prettyAge(ts: number): string {
-  const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  return prettyDuration(Date.now() - ts);
+}
+
+function prettyDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
   if (s < 60) return `${s}s`;
   if (s < 3600) return `${Math.round(s / 60)}m`;
   return `${Math.round(s / 3600)}h`;
+}
+
+function labelFor(status: AgentTaskItem["status"], t: (k: string, opts?: { defaultValue?: string }) => string): string {
+  if (status === "completed") return t("tasksTray.completed", { defaultValue: "已完成" });
+  if (status === "failed") return t("tasksTray.failed", { defaultValue: "失败" });
+  if (status === "killed") return t("tasksTray.killed", { defaultValue: "已取消" });
+  return status;
 }
 
 function safeParse(s: string | null): unknown {

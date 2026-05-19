@@ -74,6 +74,38 @@ export async function executeTool(
   const cleanup = () => ctx.signal.removeEventListener("abort", onParentAbort);
 
   try {
+    // 0. truncated JSON guard — adapters wrap an unparseable streamed
+    // arguments buffer as `{ __raw, __parse_error: true }` so the runtime
+    // can surface a clear message instead of a confusing zod error like
+    // "expected string, received undefined". This happens when the
+    // provider stops mid-JSON (finish_reason: "length", user cancel, or
+    // a server-side cut). The user can just retry — often after disabling
+    // think mode if the model is burning its token budget on reasoning.
+    if (
+      rawInput &&
+      typeof rawInput === "object" &&
+      (rawInput as { __parse_error?: unknown }).__parse_error === true
+    ) {
+      const rawStr = String((rawInput as { __raw?: unknown }).__raw ?? "");
+      const preview = rawStr.length > 200 ? rawStr.slice(0, 200) + "…" : rawStr;
+      return finalize(
+        ctx,
+        toolCallId,
+        start,
+        "errored",
+        toolResultErrorBlock(
+          toolCallId,
+          `Tool ${tool.name} received an incomplete arguments JSON from the model ` +
+            "(stream was truncated — likely finish_reason=length, user cancel, or a server-side cut). " +
+            "Retry the request; if the model uses reasoning, consider lowering the think budget so it " +
+            "doesn't burn all its tokens before emitting tool arguments.\n" +
+            `Partial arguments seen: ${preview}`
+        ),
+        true,
+        cleanup
+      );
+    }
+
     // 1. zod safeParse
     const parsed = (tool.inputSchema as z.ZodTypeAny).safeParse(rawInput);
     if (!parsed.success) {

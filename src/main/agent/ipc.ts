@@ -43,6 +43,7 @@ import { TaskTool } from "./tools/Task/index.js";
 import { TaskManager } from "./runtime/TaskManager.js";
 import { PermissionGate, type PermissionApprover, type PermissionAskRequest, type PermissionAskResponse } from "./permissions/gate.js";
 import { queryLoop } from "./runtime/queryLoop.js";
+import { runPipeline, type PipelineRunParams } from "./runtime/pipelineLoop.js";
 import type { ProviderRef, LlmStreamEvent } from "./llm/types.js";
 import type { Tool } from "./tools/Tool.js";
 
@@ -60,9 +61,12 @@ interface ActiveRun {
     string,
     { resolve: (resp: PermissionAskResponse) => void; toolCallId: string }
   >;
+  /** Gate reference for toggling bypass mode at runtime. */
+  gate?: PermissionGate;
 }
 
 const activeRuns = new Map<string, ActiveRun>();
+let globalBypassPermissions = false;
 
 export function registerAgentIpc(database: AppDatabase): void {
   // Bind the DB-aware tools that can't get a handle through ToolCallContext.
@@ -113,6 +117,27 @@ export function registerAgentIpc(database: AppDatabase): void {
         throw new Error(`unknown project ${input.projectId}`);
       }
       const projectRoot = project.path || process.cwd();
+      // Surface a clear error if the user's bound project folder no
+      // longer exists on disk (renamed / deleted / external drive
+      // unmounted). Without this, every Bash / ListDir / Read call
+      // inside the run fails with an opaque ENOENT and the user can't
+      // tell what's wrong. We refuse the whole run instead — they need
+      // to update the project binding before anything will work.
+      try {
+        const st = fs.statSync(projectRoot);
+        if (!st.isDirectory()) {
+          throw new Error(`project root is not a directory: ${projectRoot}`);
+        }
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+          throw new Error(
+            `项目目录不存在: ${projectRoot}\n` +
+              "请到「项目设置」里更新绑定路径，或者把文件夹放回原位。"
+          );
+        }
+        throw e;
+      }
       const runId = randomUUID();
       const controller = new AbortController();
       const sender = event.sender;
@@ -163,6 +188,8 @@ export function registerAgentIpc(database: AppDatabase): void {
       };
 
       const gate = new PermissionGate(database.agent, approver);
+      gate.bypassAll = globalBypassPermissions;
+      run.gate = gate;
       const registry = buildDefaultToolRegistry();
       // MCP: surface every connected MCP server's tools to this run.
       // Connection objects live in the singleton McpManager and are
@@ -202,8 +229,36 @@ export function registerAgentIpc(database: AppDatabase): void {
       } catch (e) {
         console.warn("[agent] skills wiring failed", e);
       }
-      const tools: Tool[] = registry.list();
+      const allTools: Tool[] = registry.list();
       const mode = getMode(input.modeId ?? "agent");
+
+      // Plan mode = hard read-only enforcement.
+      //
+      // We strip every non-read-only tool from the list the LLM sees, so
+      // even if the systemPrompt is ignored OR the model invents a
+      // tool name, it literally cannot dispatch a destructive call. The
+      // user explicitly hands the plan off via the "Execute as Agent"
+      // button in the renderer — that switches conversation.modeId to
+      // "agent" and sends the plan as a new message, at which point the
+      // full toolset comes back.
+      //
+      // We trust each tool's `isReadOnly()` flag: built-in writers
+      // (Write, Edit, Bash, Delete, TodoWrite, MemoryWrite, Task) return
+      // false; built-in readers (Read, Grep, Glob, ListDir, ReadLints,
+      // WebSearch, WebFetch, MemoryRead, Skill) return true. MCP tools
+      // default to false (registry.ts:95), so user-configured MCP
+      // servers are also denied in plan mode — a deliberate safe
+      // default, since we can't introspect arbitrary MCP semantics.
+      const tools: Tool[] =
+        mode.id === "plan"
+          ? allTools.filter((t) => {
+              try {
+                return t.isReadOnly({} as never) === true;
+              } catch {
+                return false;
+              }
+            })
+          : allTools;
 
       // Stash the parent provider+model so any spawned subagents inherit.
       lastProviderRef = {
@@ -220,37 +275,72 @@ export function registerAgentIpc(database: AppDatabase): void {
       // mid-stream surfaces in the resume-toast list at next boot.
       try {
         database.agent.markConversationRun(input.conversationId, runId, "in_progress");
+        database.agent.saveRunOptions(input.conversationId, {
+          providerId: input.providerId,
+          protocol: input.protocol,
+          baseUrl: input.baseUrl,
+          apiKey: input.apiKey,
+          model: input.model,
+          temperature: input.temperature,
+          thinkBudget: input.thinkBudget,
+          maxOutputTokens: input.maxOutputTokens,
+          modeId: input.modeId,
+          language: input.language
+        });
       } catch (e) {
         console.warn("[agent] markConversationRun(in_progress) failed", e);
       }
 
       void (async () => {
         try {
-          for await (const ev of queryLoop({
-            runId,
-            conversationId: input.conversationId,
-            projectId: input.projectId,
-            projectRoot,
-            projectName: project.name,
-            userMessage: input.userMessage,
-            mode,
-            provider: {
-              id: input.providerId,
-              protocol: input.protocol,
-              baseUrl: input.baseUrl,
-              apiKey: input.apiKey
-            },
-            model: input.model,
-            temperature: input.temperature ?? mode.defaultTemperature,
-            thinkBudget: input.thinkBudget ?? mode.defaultThinkBudget,
-            maxOutputTokens: input.maxOutputTokens,
-            language: input.language ?? "zh-CN",
-            tools,
-            signal: controller.signal,
-            db: database,
-            gate,
-            skillHints
-          })) {
+          const primaryProvider: ProviderRef = {
+            id: input.providerId,
+            protocol: input.protocol,
+            baseUrl: input.baseUrl,
+            apiKey: input.apiKey
+          };
+
+          const eventSource: AsyncIterable<import("./runtime/types.js").AgentEvent> =
+            input.pipelineStages && input.pipelineStages.length === 3
+              ? runPipeline({
+                  runId,
+                  conversationId: input.conversationId,
+                  projectId: input.projectId,
+                  projectRoot,
+                  projectName: project.name,
+                  userMessage: input.userMessage,
+                  mode,
+                  language: input.language ?? "zh-CN",
+                  tools,
+                  signal: controller.signal,
+                  db: database,
+                  gate,
+                  additionalWorkingDirectories: undefined,
+                  skillHints,
+                  stages: await resolvePipelineStages(input.pipelineStages, primaryProvider, database)
+                })
+              : queryLoop({
+                  runId,
+                  conversationId: input.conversationId,
+                  projectId: input.projectId,
+                  projectRoot,
+                  projectName: project.name,
+                  userMessage: input.userMessage,
+                  mode,
+                  provider: primaryProvider,
+                  model: input.model,
+                  temperature: input.temperature ?? mode.defaultTemperature,
+                  thinkBudget: input.thinkBudget ?? mode.defaultThinkBudget,
+                  maxOutputTokens: input.maxOutputTokens,
+                  language: input.language ?? "zh-CN",
+                  tools,
+                  signal: controller.signal,
+                  db: database,
+                  gate,
+                  skillHints
+                });
+
+          for await (const ev of eventSource) {
             try {
               sender.send(channel, ev as AgentRunEvent);
               // Best-effort JSONL trace for offline inspection. Skipped
@@ -311,6 +401,21 @@ export function registerAgentIpc(database: AppDatabase): void {
     }
   });
 
+  ipcMain.handle(IPC.agent.setBypassPermissions, (_e, bypass: boolean) => {
+    globalBypassPermissions = bypass;
+    for (const [, run] of activeRuns) {
+      if (run.gate) {
+        run.gate.bypassAll = bypass;
+        if (bypass) {
+          for (const [id, pending] of run.pendingPermissions) {
+            pending.resolve({ kind: "allow", scope: "once" });
+            run.pendingPermissions.delete(id);
+          }
+        }
+      }
+    }
+  });
+
   ipcMain.handle(IPC.agent.answerPermission, (_e, payload: AgentPermissionResponse) => {
     const run = activeRuns.get(payload.runId);
     if (!run) return;
@@ -354,17 +459,271 @@ export function registerAgentIpc(database: AppDatabase): void {
     return database.agent.costSumForConversation(conversationId);
   });
 
+  /**
+   * Context budget snapshot — used by the chat panel to render the
+   * "X / 128k" ring as soon as the user opens an existing conversation,
+   * BEFORE any new turn streams. Recomputes the same numbers the
+   * queryLoop would emit on its first `context_budget` event so the
+   * pre-turn and mid-turn displays stay consistent.
+   */
+  ipcMain.handle(
+    IPC.agent.contextSnapshot,
+    async (
+      _e,
+      input: {
+        conversationId: string;
+        model: string;
+        thinkBudget?: import("@shared/types.js").ThinkBudget;
+      }
+    ): Promise<{ usedTokens: number; budgetTokens: number; windowTokens: number; compacted: boolean }> => {
+      // Lazy-import to avoid pulling agent runtime modules into a non-agent
+      // codepath at startup. Note these modules are still bundled into the
+      // main process; this is just an import-graph nicety.
+      const { modelContextFor } = await import("./context/modelLimits.js");
+      const { tokensForHistory } = await import("./context/tokenizer.js");
+      const messages = database.listMessages(input.conversationId);
+      // Cheap canonicalisation: tokensForHistory only needs text content,
+      // so we wrap each message in a single text block (matching how the
+      // queryLoop's `loadCanonicalHistory` would emit legacy rows without
+      // parts). Per-tool-call parts in newer rows are summarised via the
+      // text preview the renderer already persists. This stays a
+      // best-effort estimate — we'd over-count slightly compared to the
+      // real per-tool-block tokenisation, but the user reads this number
+      // as a rough utilisation gauge, not a billing meter.
+      const history = messages
+        .filter((m) => m.role !== "system")
+        .map((m) => ({
+          role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
+          blocks: [{ type: "text" as const, text: m.content ?? "" }]
+        }));
+      const usedTokens = tokensForHistory(history);
+      const ctx = modelContextFor(input.model, { thinkBudget: input.thinkBudget });
+      return {
+        usedTokens,
+        budgetTokens: ctx.promptBudget,
+        windowTokens: ctx.contextWindow,
+        compacted: false
+      };
+    }
+  );
+
   ipcMain.handle(IPC.agent.listInterrupted, () => {
     return database.agent.listInterruptedConversations();
   });
 
   ipcMain.handle(IPC.agent.discardInterrupted, (_e, conversationId: string) => {
-    // The user chose "discard" — flip the marker so the toast doesn't
-    // resurrect on next boot. We don't actually try to resume the loop
-    // (M4-3 v1 ships discard-only; resume requires reconstructing the
-    // exact provider/model/options which we don't persist yet).
     database.agent.markConversationRun(conversationId, "discarded", "cancelled");
+    database.agent.clearRunOptions(conversationId);
   });
+
+  /* ── Resume an interrupted run ──────────────────────────────────── */
+
+  ipcMain.handle(
+    IPC.agent.resumeRun,
+    async (event, conversationId: string): Promise<{ runId: string }> => {
+      const opts = database.agent.loadRunOptions(conversationId);
+      if (!opts) {
+        throw new Error("No persisted run options for this conversation — cannot resume.");
+      }
+      const conv = database.getConversation(conversationId);
+      if (!conv || !conv.projectId) {
+        throw new Error("Conversation not found or has no project.");
+      }
+      const project = database.listProjects().find((p) => p.id === conv.projectId);
+      if (!project) {
+        throw new Error(`unknown project ${conv.projectId}`);
+      }
+      const projectRoot = project.path || process.cwd();
+      // Same project-root guard as startRun — see comment there.
+      try {
+        const st = fs.statSync(projectRoot);
+        if (!st.isDirectory()) {
+          throw new Error(`project root is not a directory: ${projectRoot}`);
+        }
+      } catch (e) {
+        const code = (e as NodeJS.ErrnoException).code;
+        if (code === "ENOENT") {
+          throw new Error(
+            `项目目录不存在: ${projectRoot}\n` +
+              "请到「项目设置」里更新绑定路径，或者把文件夹放回原位。"
+          );
+        }
+        throw e;
+      }
+
+      // Prefer current provider config over the stale snapshot when
+      // the provider still exists (credentials may have been rotated).
+      let providerId = String(opts.providerId ?? "");
+      let protocol = String(opts.protocol ?? "");
+      let baseUrl = String(opts.baseUrl ?? "");
+      let apiKey = String(opts.apiKey ?? "");
+      const currentProvider = database.getProviderConfig?.(providerId);
+      if (currentProvider) {
+        protocol = currentProvider.protocol ?? protocol;
+        baseUrl = currentProvider.baseUrl ?? baseUrl;
+        apiKey = currentProvider.apiKey ?? apiKey;
+      }
+
+      const model = String(opts.model ?? "");
+      const modeId = String(opts.modeId ?? "agent");
+      const language = (opts.language as "zh-CN" | "en") ?? "zh-CN";
+
+      // Find the last assistant message with empty content — the
+      // unfinished placeholder from the crashed run.
+      const messages = database.listMessages(conversationId);
+      let assistantMessageId: string | null = null;
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].role === "assistant" && messages[i].content === "") {
+          assistantMessageId = messages[i].id;
+          break;
+        }
+      }
+
+      const runId = randomUUID();
+      const controller = new AbortController();
+      const sender = event.sender;
+      const channel = agentRunChannel(runId);
+      const permissionChannel = agentPermissionChannel(runId);
+
+      const run: ActiveRun = {
+        controller,
+        sender,
+        pendingPermissions: new Map()
+      };
+      activeRuns.set(runId, run);
+
+      const approver: PermissionApprover = {
+        ask: (req: PermissionAskRequest, signal: AbortSignal) =>
+          new Promise<PermissionAskResponse>((resolve, reject) => {
+            run.pendingPermissions.set(req.id, { resolve, toolCallId: req.id });
+            const onAbort = () => {
+              run.pendingPermissions.delete(req.id);
+              reject(new Error("aborted"));
+            };
+            if (signal.aborted) { onAbort(); return; }
+            signal.addEventListener("abort", onAbort, { once: true });
+            const payload: AgentRunEvent = {
+              kind: "permission_request",
+              toolCallId: req.id,
+              toolName: req.toolName,
+              input: req.input,
+              uiPreview: req.uiPreview,
+              toolReason: req.toolReason
+            };
+            try {
+              sender.send(channel, payload);
+              sender.send(permissionChannel, { ...payload, id: req.id });
+            } catch {
+              run.pendingPermissions.delete(req.id);
+              reject(new Error("renderer disconnected"));
+            }
+          })
+      };
+
+      const gate = new PermissionGate(database.agent, approver);
+      gate.bypassAll = globalBypassPermissions;
+      run.gate = gate;
+      const registry = buildDefaultToolRegistry();
+      try {
+        const { getMcpManager } = await import("./mcp/registry.js");
+        await getMcpManager().refreshAll(database.listMcpServers());
+        const mcpTools = await getMcpManager().buildTools();
+        for (const t of mcpTools) {
+          try { registry.register(t); } catch { /* dup */ }
+        }
+      } catch (e) {
+        console.warn("[agent] MCP tool wiring failed (resume)", e);
+      }
+      let skillHints: Array<{ name: string; source: "project" | "user"; description: string }> = [];
+      try {
+        const { loadSkills } = await import("./skills/loader.js");
+        const { bindSkillCatalog } = await import("./tools/Skill/index.js");
+        const skillRoots: Array<{ dir: string; source: "project" | "user" }> = [];
+        if (projectRoot) skillRoots.push({ dir: path.join(projectRoot, ".agent", "skills"), source: "project" });
+        try { skillRoots.push({ dir: path.join(app.getPath("userData"), "skills"), source: "user" }); } catch { /* test */ }
+        const skills = await loadSkills(skillRoots);
+        bindSkillCatalog(skills);
+        skillHints = skills.map((s) => ({ name: s.name, source: s.source, description: s.description }));
+      } catch (e) {
+        console.warn("[agent] skills wiring failed (resume)", e);
+      }
+      const tools: Tool[] = registry.list();
+      const mode = getMode(modeId);
+
+      lastProviderRef = {
+        provider: { id: providerId, protocol, baseUrl, apiKey },
+        model
+      };
+
+      try {
+        database.agent.markConversationRun(conversationId, runId, "in_progress");
+      } catch (e) {
+        console.warn("[agent] markConversationRun(resume) failed", e);
+      }
+
+      void (async () => {
+        try {
+          for await (const ev of queryLoop({
+            runId,
+            conversationId,
+            projectId: conv.projectId,
+            projectRoot,
+            projectName: project.name,
+            userMessage: null,
+            assistantMessageId,
+            mode,
+            provider: { id: providerId, protocol, baseUrl, apiKey },
+            model,
+            temperature: (opts.temperature as number | undefined) ?? mode.defaultTemperature,
+            thinkBudget: (opts.thinkBudget as import("@shared/types.js").ThinkBudget | undefined) ?? mode.defaultThinkBudget,
+            maxOutputTokens: opts.maxOutputTokens as number | undefined,
+            language,
+            tools,
+            signal: controller.signal,
+            db: database,
+            gate,
+            skillHints
+          })) {
+            try {
+              sender.send(channel, ev as AgentRunEvent);
+              appendTraceLine(runId, ev);
+            } catch {
+              controller.abort();
+              break;
+            }
+            if (ev.kind === "terminal") {
+              const dbStatus: "completed" | "failed" | "cancelled" | "budget_exceeded" =
+                ev.reason === "completed" ? "completed"
+                  : ev.reason === "cancelled" ? "cancelled"
+                    : ev.reason === "budget_exceeded" ? "budget_exceeded"
+                      : "failed";
+              try {
+                database.agent.markConversationRun(conversationId, runId, dbStatus);
+                appendTraceLine(runId, { kind: "terminal", reason: ev.reason, message: ev.message ?? null, at: Date.now() });
+              } catch (e) {
+                console.warn("[agent] markConversationRun(resume terminal) failed", e);
+              }
+              break;
+            }
+          }
+        } catch (e) {
+          try {
+            sender.send(channel, {
+              kind: "terminal",
+              reason: "stream_error",
+              message: (e as Error).message || "unexpected"
+            } satisfies AgentRunEvent);
+          } catch { /* ignore */ }
+        } finally {
+          for (const p of run.pendingPermissions.values()) p.resolve({ kind: "deny" });
+          run.pendingPermissions.clear();
+          activeRuns.delete(runId);
+        }
+      })();
+
+      return { runId };
+    }
+  );
 }
 
 /** Cancel every active run owned by a webContents. Called when the
@@ -470,5 +829,46 @@ function buildApproverFromRun(
           reject(new Error("renderer disconnected"));
         }
       })
+  };
+}
+
+/**
+ * Resolve pipeline stage configs into concrete ProviderRef objects.
+ * Each stage may use a different provider/model. Falls back to the
+ * primary provider when a stage's credentials aren't found.
+ */
+async function resolvePipelineStages(
+  stages: import("@shared/types.js").PipelineStageConfig[],
+  primaryProvider: ProviderRef,
+  database: AppDatabase
+): Promise<PipelineRunParams["stages"]> {
+  const resolveOne = async (cfg: import("@shared/types.js").PipelineStageConfig) => {
+    let provider: ProviderRef = primaryProvider;
+    if (cfg.providerId && cfg.providerId !== primaryProvider.id) {
+      const pc = database.getProviderConfig(cfg.providerId);
+      if (pc) {
+        provider = {
+          id: pc.id,
+          protocol: pc.protocol,
+          baseUrl: pc.baseUrl,
+          apiKey: pc.apiKey
+        };
+      }
+    }
+    return {
+      provider,
+      model: cfg.modelId,
+      thinkBudget: cfg.thinkBudget
+    };
+  };
+
+  const plannerCfg = stages.find((s) => s.role === "planner") ?? stages[0];
+  const executorCfg = stages.find((s) => s.role === "executor") ?? stages[1];
+  const reviewerCfg = stages.find((s) => s.role === "reviewer") ?? stages[2];
+
+  return {
+    planner: await resolveOne(plannerCfg),
+    executor: await resolveOne(executorCfg),
+    reviewer: await resolveOne(reviewerCfg)
   };
 }

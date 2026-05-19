@@ -18,22 +18,35 @@ import { z } from "zod";
 import { buildTool, blockFromText, type Tool, type ToolResult } from "../Tool.js";
 import { validateProjectPath } from "../../permissions/pathValidation.js";
 
-const inputSchema = z.object({
-  path: z.string().describe("Project-relative or absolute path of the file to edit."),
-  old_string: z
-    .string()
-    .min(1)
-    .describe(
-      "Exact substring to find. MUST be unique within the file unless `replace_all` is true. Include at least 3-5 lines of context on each side."
-    ),
-  new_string: z
-    .string()
-    .describe("Replacement substring. Must differ from `old_string`."),
-  replace_all: z
-    .boolean()
-    .optional()
-    .describe("If true, replace every occurrence of `old_string`. Default false.")
-});
+// See Read/index.ts: tolerate `file_path` because most models trained on
+// Claude-Code-style tool catalogues will reach for that name reflexively.
+const inputSchema = z.preprocess(
+  (raw) => {
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const o = raw as Record<string, unknown>;
+      if (o.path === undefined && typeof o.file_path === "string") {
+        return { ...o, path: o.file_path };
+      }
+    }
+    return raw;
+  },
+  z.object({
+    path: z.string().describe("Project-relative or absolute path of the file to edit."),
+    old_string: z
+      .string()
+      .min(1)
+      .describe(
+        "Exact substring to find. MUST be unique within the file unless `replace_all` is true. Include at least 3-5 lines of context on each side."
+      ),
+    new_string: z
+      .string()
+      .describe("Replacement substring. Must differ from `old_string`."),
+    replace_all: z
+      .boolean()
+      .optional()
+      .describe("If true, replace every occurrence of `old_string`. Default false.")
+  })
+);
 
 type Input = z.infer<typeof inputSchema>;
 

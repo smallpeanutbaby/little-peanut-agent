@@ -92,9 +92,45 @@ export const BashTool: Tool<typeof inputSchema, Output> = buildTool({
     }
     const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS;
     const isWin = process.platform === "win32";
-    const shell = isWin ? "pwsh" : "bash";
+    // Use an absolute path for the POSIX shell so we don't depend on the
+    // electron-spawned process inheriting a usable PATH. macOS/Linux ship
+    // bash at /bin/bash; if a user's distro really lacks it they can
+    // symlink. On Windows we still rely on PATH for `pwsh`.
+    const shell = isWin ? "pwsh" : "/bin/bash";
     const shellArgs = isWin ? ["-NoLogo", "-Command"] : ["-lc"];
     const cwd = ctx.projectRoot;
+
+    // Validate cwd up-front. Without this check, spawn fails inside Node's
+    // chdir() and the error message comes back as `spawn bash ENOENT`,
+    // which is wildly misleading — users (rightfully) start hunting for a
+    // missing bash binary when the real cause is "the project folder no
+    // longer exists on disk". Catch it early with a useful message.
+    try {
+      const stat = await fs.stat(cwd);
+      if (!stat.isDirectory()) {
+        return {
+          ok: false,
+          errorCode: "cwd_not_a_dir",
+          errorMessage: `project root is not a directory: ${cwd}`
+        };
+      }
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return {
+          ok: false,
+          errorCode: "cwd_missing",
+          errorMessage:
+            `项目目录不存在，无法执行命令: ${cwd}\n` +
+            "请检查项目绑定的本地路径——文件夹可能已被删除、重命名或移动。"
+        };
+      }
+      return {
+        ok: false,
+        errorCode: "cwd_unreadable",
+        errorMessage: `cannot stat project root ${cwd}: ${(e as Error).message}`
+      };
+    }
 
     const startedAt = Date.now();
     const env = sanitiseEnv(process.env);

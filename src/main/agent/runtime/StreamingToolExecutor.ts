@@ -159,10 +159,16 @@ export class StreamingToolExecutor {
     const res = await executeTool(tool, entry.input, entry.toolCallId, this.opts.ctx);
     entry.result = res;
     this.opts.onResult?.({ toolCallId: entry.toolCallId, toolName: entry.toolName, input: entry.input, result: res });
-    // If a non-safe tool failed, cascade-cancel pending siblings (matches
-    // Claude Code semantics — when Bash bails, don't run subsequent
-    // queued writes against a broken state).
-    if (!this.isConcurrencySafe(entry) && (res.status === "errored" || res.status === "denied")) {
+    // Cascade-cancel pending siblings when a side-effectful tool fails
+    // (Bash/Write/Delete), matching Claude Code's "broken state" guard.
+    // Metadata tools (TodoWrite, MemoryWrite, Task) failing shouldn't
+    // block sibling work — the model just sent bad parameters.
+    const CASCADE_EXEMPT = new Set(["TodoWrite", "MemoryWrite", "Task", "todo_write", "memory_write"]);
+    if (
+      !this.isConcurrencySafe(entry) &&
+      (res.status === "errored" || res.status === "denied") &&
+      !CASCADE_EXEMPT.has(entry.toolName)
+    ) {
       this.cascadeCancelled = true;
     }
     this.kick();

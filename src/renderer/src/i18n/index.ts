@@ -56,6 +56,14 @@ void i18n
             footerHint: "切换后从下一条消息生效",
             chat:       { name: "对话",   desc: "日常闲聊、随手问答、自由聊天" },
             agent:      { name: "Agent",  desc: "面向项目的执行型助手：先拆解计划再动手，可读写文件、直接给改动" },
+            plan:       {
+              name: "计划",
+              desc: "先调研代码、再反问确认细节，最后输出实施方案；确认后一键交给 Agent 执行",
+              execute: "让 Agent 按此计划执行",
+              editHint: "可直接编辑下方方案，确认后交给 Agent 执行",
+              clarifyHint: "在下方输入框回复你的选择，或发送「直接出方案」跳过确认"
+            },
+            pipeline:   { name: "流水线", desc: "多模型协作：制定计划→执行工作→审查结果，三阶段自动流转" },
             writing:    { name: "写作",   desc: "起草、润色、改写、翻译，文笔流畅" },
             code:       { name: "代码",   desc: "编程、调试、代码审查，工程师视角" },
             learning:   { name: "学习",   desc: "概念讲解、知识科普，分步骤+举例" },
@@ -63,6 +71,16 @@ void i18n
             brainstorm: { name: "创意",   desc: "先澄清再发散，把模糊想法变成方案" },
             translate:  { name: "翻译",   desc: "中英互译，保留原格式" },
             summarize:  { name: "总结",   desc: "长文摘要，TL;DR + 要点" }
+          },
+          pipeline: {
+            configTitle: "多模型流水线配置",
+            config: "流水线",
+            planner: "📋 制定计划",
+            executor: "⚡ 执行工作",
+            reviewer: "🔍 审查结果",
+            hint: "制定计划 → 执行工作 → 审查结果",
+            bypassOn: "免审模式开启：所有工具自动批准",
+            bypassOff: "免审模式关闭：工具需手动审批"
           },
           home: {
             pageTitle: "对话",
@@ -465,6 +483,14 @@ void i18n
             footerHint: "Takes effect on the next message",
             chat:       { name: "Chat",       desc: "Everyday conversation and quick questions" },
             agent:      { name: "Agent",      desc: "Project-aware execution mode: plans, then takes concrete action — file paths, diffs, direct edits" },
+            plan:       {
+              name: "Plan",
+              desc: "Survey the codebase, ask clarifying questions, then deliver an implementation plan — hand off to Agent when ready",
+              execute: "Execute plan with Agent",
+              editHint: "Edit the plan below, then hand off to Agent when ready",
+              clarifyHint: "Reply with your choices below, or send \"直接出方案\" to skip clarification"
+            },
+            pipeline:   { name: "Pipeline",  desc: "Multi-model collaboration: plan → execute → review in three automated stages" },
             writing:    { name: "Writing",    desc: "Draft, polish, rewrite, translate" },
             code:       { name: "Code",       desc: "Programming, debugging, code review" },
             learning:   { name: "Learning",   desc: "Concept explanations, step-by-step + examples" },
@@ -472,6 +498,16 @@ void i18n
             brainstorm: { name: "Brainstorm", desc: "Clarify first, then diverge — turns vague ideas into options" },
             translate:  { name: "Translate",  desc: "Bilingual translation, preserves formatting" },
             summarize:  { name: "Summarize",  desc: "TL;DR and key points for long content" }
+          },
+          pipeline: {
+            configTitle: "Multi-Model Pipeline Config",
+            config: "Pipeline",
+            planner: "📋 Plan",
+            executor: "⚡ Execute",
+            reviewer: "🔍 Review",
+            hint: "Plan → Execute → Review",
+            bypassOn: "Bypass mode on: all tools auto-approved",
+            bypassOff: "Bypass mode off: tools need manual approval"
           },
           home: {
             pageTitle: "New Chat",

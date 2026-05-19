@@ -28,15 +28,33 @@ const todoItemSchema = z.object({
     .describe("`pending` not started; `in_progress` actively being worked on (only one item at a time); `completed` done.")
 });
 
-const inputSchema = z.object({
-  items: z
-    .array(todoItemSchema)
-    .min(1)
-    .max(50)
-    .describe(
-      "Full ordered list of todo items for this run. Send the WHOLE list every time you call this tool — the runtime replaces the existing list atomically."
-    )
-});
+const inputSchema = z.preprocess(
+  (raw) => {
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const obj = raw as Record<string, unknown>;
+      // Normal case: { items: [...] }
+      if (Array.isArray(obj.items)) return obj;
+      // Model passed a single todo at root: { content, status }
+      if (typeof obj.content === "string" && typeof obj.status === "string") {
+        return { items: [{ content: obj.content, status: obj.status }] };
+      }
+      // Model nested under "todos" instead of "items"
+      if (Array.isArray(obj.todos)) return { items: obj.todos };
+    }
+    // Model passed a bare array
+    if (Array.isArray(raw)) return { items: raw };
+    return raw;
+  },
+  z.object({
+    items: z
+      .array(todoItemSchema)
+      .min(1)
+      .max(50)
+      .describe(
+        "Full ordered list of todo items for this run. Send the WHOLE list every time you call this tool — the runtime replaces the existing list atomically."
+      )
+  })
+);
 
 type Input = z.infer<typeof inputSchema>;
 

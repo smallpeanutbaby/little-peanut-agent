@@ -53,7 +53,8 @@ const INTERACTION_STYLE = [
   "- Be concise. No filler like \"Certainly!\" or \"Here's what I'll do\". Get to substance.",
   "- When you make a plan with multiple steps, use the `TodoWrite` tool to track progress.",
   "- Surface errors verbatim and explain causes briefly; don't paper over them.",
-  "- Use markdown sparingly — code fences for code, backticks for identifiers, plain prose otherwise."
+  "- Use markdown sparingly — code fences for code, backticks for identifiers, plain prose otherwise.",
+  "- **IMPORTANT: When you have finished the task (no more tool calls needed), you MUST provide a completion summary.** The summary should briefly cover: (1) what was accomplished, (2) key changes made (files modified, commands run), and (3) any remaining issues or next steps. Keep it concise — 3-8 sentences."
 ].join("\n");
 
 export function buildSystemPrompt(opts: SystemPromptOptions): string[] {

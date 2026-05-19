@@ -19,6 +19,16 @@ describe("modes / context compression", () => {
         expect(CHAT_MODE_MAP[m.id]).toBe(m);
       }
     });
+
+    it("plan mode is registered with a real prompt and a project-friendly accent", () => {
+      const plan = getMode("plan");
+      expect(plan.id).toBe("plan");
+      expect(plan.systemPrompt.length).toBeGreaterThan(50);
+      expect(plan.nameKey).toBe("modes.plan.name");
+      expect(plan.descKey).toBe("modes.plan.desc");
+      // Plan is meant to use a reasoning-capable temperature ≤ Agent's.
+      expect(plan.defaultTemperature ?? 1).toBeLessThanOrEqual(0.5);
+    });
   });
 
   describe("estimateTokens", () => {
