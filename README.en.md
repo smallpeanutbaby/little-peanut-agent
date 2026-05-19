@@ -10,22 +10,24 @@ Little Peanut is a local-first Electron app that brings multi-model chat, agent 
 
 ## Why Little Peanut?
 
-Many AI products can chat, but they are still far from being a practical local collaboration environment:
+Little Peanut is not trying to be another AI chat client.
 
-- They know the prompt, but not the project you are actually working on
-- They can answer, but cannot reliably continue work inside a real workspace
-- They can call tools, but often lack stable permission boundaries and recovery flows
-- They may support model switching, but not unified management of providers, models, tasks, and state
+Its real focus is different: bringing models into the actual local work loop instead of keeping them trapped inside a reply box.
 
-Little Peanut is designed to close that gap.
+In real software work, the hard part is rarely just whether a model can answer well. The harder questions are:
 
-It is not meant to be just a chat shell, but a real desktop agent environment for local work:
+- Can it understand which project, codebase, and task chain it is actually operating on?
+- Can it keep investigation, planning, execution, and review inside one continuous workflow?
+- Can it use files, commands, and networked tools with clear boundaries and explicit control?
+- Can it preserve conversations, tasks, permissions, memory, and runtime state instead of resetting from scratch every time?
 
-- **Local-first**: conversations, projects, model configs, and task state are stored locally
-- **Controlled execution**: tool calls go through approval and risk checks
-- **Plan before execution**: planning and execution are separated to avoid reckless changes
-- **Recoverable**: interrupted runs can be resumed, discarded, or reviewed
-- **Extensible**: the app is built to support multiple providers, MCP servers, custom models, and future skill systems
+Little Peanut is meant to be a desktop agent environment for local work, not a more decorated chat wrapper:
+
+- **Workspace-oriented**: it is designed to operate inside a real project directory, not outside project context
+- **Controlled execution**: tool use, command execution, and destructive actions go through explicit gates and approvals
+- **Planning first**: `Plan` handles investigation and strategy, while `Agent` handles execution
+- **Recoverable state**: interrupted runs, unfinished tasks, prior decisions, and cost history can be resumed and reviewed
+- **Local persistence**: conversations, model configs, permission rules, memory indexes, and task state stay on the machine
 
 ## What Is It?
 
