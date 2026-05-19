@@ -1,47 +1,66 @@
 # Little Peanut
 
-**面向本地项目工作的桌面 AI Agent 工作台。**  
-**A desktop AI agent workspace built for local project execution.**
+**面向本地项目工作的桌面 AI Agent 工作台。**
 
-一个本地优先的 Electron 应用，把多模型对话、Agent 执行、Plan 规划、Pipeline 编排、权限审批、MCP 扩展和 SQLite 持久化放进同一套桌面工作流里。  
-Little Peanut is a local-first Electron app that brings multi-model chat, agent execution, planning, pipeline orchestration, permission approval, MCP extensibility, and SQLite persistence into one desktop workflow.
+一个本地优先的 Electron 应用，把多模型对话、Agent 执行、Plan 规划、Pipeline 编排、权限审批、MCP 扩展和 SQLite 持久化放进同一套桌面工作流里。
 
-[架构 / Architecture](./docs/architecture.md) · `Node.js 22+` · `Electron` · `React` · `SQLite`
+[English](./README.en.md) · [架构文档](./docs/architecture.md) · `Node.js 22+` · `Electron` · `React` · `SQLite`
 
 ---
 
-## 为什么是 Little Peanut? / Why Little Peanut?
+## 为什么是 Little Peanut？
 
-今天很多 AI 产品都能“聊天”，但离真正可用的本地协作环境还差一截：  
-Many AI products can chat, but they are still far from being a practical local collaboration environment:
+今天很多 AI 产品都能“聊天”，但离真正可用的本地协作环境还差一截：
 
-- 它们知道问题，不知道你正在处理哪个项目  
-  They know the prompt, but not the project you are actually working on.
-- 它们会回答，但不一定能在工作区里持续执行任务  
-  They can answer, but cannot reliably continue work inside a real workspace.
-- 它们能调工具，但缺少稳定的权限边界和恢复机制  
-  They can call tools, but often lack stable permission boundaries and recovery flows.
-- 它们有模型切换，但没有统一的服务商、模型、任务和状态管理  
-  They may support model switching, but not unified management of providers, models, tasks, and state.
+- 它们知道问题，不知道你正在处理哪个项目
+- 它们会回答，但不一定能在工作区里持续执行任务
+- 它们能调工具，但缺少稳定的权限边界和恢复机制
+- 它们有模型切换，但没有统一的服务商、模型、任务和状态管理
 
-Little Peanut 想解决的是这层断裂。  
-Little Peanut is designed to close that gap.
+Little Peanut 想解决的是这层断裂。
 
-我们希望它不是一个聊天壳，而是一个真正面向本地工作的 Agent 桌面环境：  
-It is not meant to be just a chat shell, but a real desktop agent environment for local work:
+我们希望它不是一个聊天壳，而是一个真正面向本地工作的 Agent 桌面环境：
 
-- **本地优先 / Local-first**: 对话、项目、模型配置、任务状态统一落本地  
-  Conversations, projects, model configs, and task state are stored locally.
-- **可控执行 / Controlled execution**: 工具调用经过权限审批和风险门禁  
-  Tool calls go through approval and risk checks.
-- **先计划再动手 / Plan before execution**: Plan 和 Agent 分层，避免直接乱改  
-  Planning and execution are separated to avoid reckless changes.
-- **可恢复 / Recoverable**: 运行中断后可以继续、放弃、回看任务轨迹  
-  Interrupted runs can be resumed, discarded, or reviewed.
-- **可扩展 / Extensible**: 支持多服务商、MCP 服务器、自定义模型和后续技能体系  
-  The app is built to support multiple providers, MCP servers, custom models, and future skill systems.
+- **本地优先**: 对话、项目、模型配置、任务状态统一落本地
+- **可控执行**: 工具调用经过权限审批和风险门禁
+- **先计划再动手**: Plan 和 Agent 分层，避免直接乱改
+- **可恢复**: 运行中断后可以继续、放弃、回看任务轨迹
+- **可扩展**: 支持多服务商、MCP 服务器、自定义模型和后续技能体系
 
-## 架构 / Architecture
+## 这是什么？
+
+Little Peanut 是一个桌面端 AI 工作台，目标不是替代 IDE，也不是再做一个网页聊天框，而是把“模型、工具、项目、状态、记忆、审批、恢复”这些真实工作里会断开的部分重新拼在一起。
+
+从代码结构上看，它已经具备一个本地 Agent 产品的核心骨架：
+
+- Electron 主进程负责模型适配、Agent runtime、权限门禁、MCP、SQLite 和 IPC
+- React 渲染层负责聊天 UI、计划面板、Pipeline 配置、审批弹窗、任务与恢复提示
+- Preload 层收口所有高权限能力，通过 `window.electronAPI` 暴露给前端
+- 本地 SQLite 负责保存对话、模型配置、任务、工具运行记录、权限规则、记忆索引和成本日志
+
+## 适合谁用？
+
+这类项目更适合下面几种使用场景：
+
+- 想在本地项目里使用 Agent，而不是只在浏览器里聊天的人
+- 需要同时管理多个模型与服务商的人
+- 希望先规划、再执行，减少误改风险的人
+- 需要对工具调用做审批、审计、恢复和追踪的人
+- 想把 MCP、记忆、任务和项目状态统一进一个桌面应用的人
+
+## 典型工作流
+
+Little Peanut 目前更接近下面这种使用方式：
+
+1. 选择项目工作区与当前模型
+2. 在聊天区决定当前是 `Chat`、`Agent`、`Plan` 还是 `Pipeline`
+3. 如果任务复杂，先进入 `Plan` 模式做只读调研和实施方案拆解
+4. 方案确认后交给 `Agent` 执行，在工作区内调用工具完成具体改动
+5. 敏感或破坏性操作经过审批
+6. 运行中断后通过恢复提示继续任务
+7. 对话、工具执行、Todo、任务、成本和权限规则都保留在本地
+
+## 架构
 
 ```text
 ┌──────────────────────────────────────────────┐
@@ -57,7 +76,7 @@ It is not meant to be just a chat shell, but a real desktop agent environment fo
 ┌──────────────────────▼───────────────────────┐
 │ Main Process                                 │
 │ AI Adapters · Agent Runtime · IPC · Security │
-│ Permissions · MCP · Git · SQLite            │
+│ Permissions · MCP · Git · SQLite             │
 └──────────────────────┬───────────────────────┘
                        │
 ┌──────────────────────▼───────────────────────┐
@@ -67,188 +86,273 @@ It is not meant to be just a chat shell, but a real desktop agent environment fo
 └──────────────────────────────────────────────┘
 ```
 
-## 当前已有能力 / What It Already Has
+## 当前已有能力
 
-这不是纯概念仓库，当前代码里已经有一套能继续往前长的骨架。  
-This is not a concept-only repository. The current codebase already contains a practical foundation that can keep growing.
+这不是纯概念仓库，当前代码里已经有一套能继续往前长的骨架。
 
-### 1. 多模型与多服务商配置 / Multi-model and Multi-provider Setup
+### 1. 多模型与多服务商配置
 
-- 支持 `OpenAI`、`Anthropic`、`Gemini` 以及 OpenAI 兼容端点  
-  Supports `OpenAI`, `Anthropic`, `Gemini`, and OpenAI-compatible endpoints.
-- 支持自定义服务商，保存 `Base URL`、`API Key`、协议和启用状态  
-  Supports custom providers with persisted `Base URL`, `API Key`, protocol, and enabled state.
-- 支持自定义模型、能力标签、推理协议、批量启停  
-  Supports custom models, capability labels, reasoning protocol settings, and batch enable or disable.
-- 前端已提供完整的模型和服务商管理入口  
-  The renderer already provides complete provider and model management UI.
+- 支持 `OpenAI`、`Anthropic`、`Gemini` 以及 OpenAI 兼容端点
+- 主进程支持 `openai-chat`、`openai-responses`、`openai-compatible`、`anthropic-messages`、`google-gemini` 等协议
+- 支持自定义服务商，保存 `Base URL`、`API Key`、协议和启用状态
+- 支持自定义模型、能力标签、推理协议、批量启停
+- 前端已提供完整的模型和服务商管理入口
 
-### 2. Agent 执行模式 / Agent Execution Mode
+### 2. Agent 执行模式
 
-- Agent 可以在项目工作区内调用工具执行任务  
-  Agents can call tools and execute tasks inside a project workspace.
-- 工具调用有生命周期记录、状态跟踪和结构化结果回传  
-  Tool calls have lifecycle logs, status tracking, and structured result streaming.
-- 支持 `Todo`、运行任务列表、成本统计、上下文压缩  
-  Supports todos, running task lists, cost summaries, and context compression.
-- 支持中断后的恢复或丢弃，不会因为一次崩溃把上下文全丢掉  
-  Interrupted runs can be resumed or discarded instead of losing all progress after a crash.
+- Agent 可以在项目工作区内调用工具执行任务
+- 工具调用有生命周期记录、状态跟踪和结构化结果回传
+- 支持 `Todo`、运行任务列表、成本统计、上下文压缩
+- 支持中断后的恢复或丢弃，不会因为一次崩溃把上下文全丢掉
 
-### 3. Plan 模式 / Plan Mode
+### 3. Plan 模式
 
-- Plan 是只读规划模式，不直接改文件  
-  Plan mode is read-only and does not directly modify files.
-- 可以识别澄清问题和最终实施方案  
-  It can identify clarification questions and final implementation plans.
-- 前端有独立计划面板，便于先拆任务、再进入执行  
-  The UI includes a dedicated planning panel so work can be scoped before execution starts.
+- Plan 是只读规划模式，不直接改文件
+- 会先做调研，再判断是否需要澄清问题，最后输出结构化实施方案
+- 可以识别澄清问题和最终实施方案
+- 前端有独立计划面板，便于先拆任务、再进入执行
 
-### 4. Pipeline 模式 / Pipeline Mode
+### 4. Pipeline 模式
 
-- 当前按 `planner -> executor -> reviewer` 三阶段组织  
-  The current pipeline is organized as `planner -> executor -> reviewer`.
-- 已有前端配置界面  
-  A pipeline configuration UI already exists.
-- 主进程已有 pipeline loop 和完成报告结构  
-  The main process already has a pipeline loop and completion report structure.
+- 当前按 `planner -> executor -> reviewer` 三阶段组织
+- 已有前端配置界面
+- 主进程已有 pipeline loop 和完成报告结构
 
-### 5. 权限审批与风险门禁 / Permission Approval and Risk Gating
+### 5. 权限审批与风险门禁
 
-- 工具执行会经过统一权限网关  
-  Tool execution goes through a centralized permission gate.
-- Bash 命令有风险分类  
-  Bash commands are risk-classified.
-- 破坏性操作会升级审批  
-  Destructive operations are escalated for explicit approval.
-- 权限规则支持持久化，后续可以继续做项目级或会话级策略  
-  Permission rules are persisted and can evolve into project-level or session-level policies.
+- 工具执行会经过统一权限网关
+- Bash 命令有风险分类
+- 破坏性操作会升级审批
+- 支持会话级、项目级权限规则持久化
+- 支持免审开关，但默认仍是显式审批路径
 
-### 6. MCP 与扩展能力 / MCP and Extensibility
+### 6. MCP 与扩展能力
 
-- 已有 MCP 服务器配置、测试、启停和连接入口  
-  MCP server configuration, connectivity testing, enable or disable, and connection flows are already present.
-- 支持 `stdio`、`SSE`、`HTTP` 类型连接  
-  Supports `stdio`, `SSE`, and `HTTP` transports.
-- 为后续技能、工具生态和外部能力接入留了扩展位  
-  The architecture already leaves room for future skills, tool ecosystems, and external integrations.
+- 已有 MCP 服务器配置、测试、启停和连接入口
+- 支持 `stdio`、`SSE`、`HTTP` 类型连接
+- 为后续技能、工具生态和外部能力接入留了扩展位
 
-### 7. 本地持久化 / Local Persistence
+### 7. 本地持久化
 
-- SQLite 持久化已经覆盖会话、消息、工具运行、任务、权限、记忆索引、成本日志等核心数据  
-  SQLite persistence already covers conversations, messages, tool runs, tasks, permissions, memory indexes, and cost logs.
-- Schema 通过 migration 维护，后续演进有明确约束  
-  The schema is maintained through migrations with explicit evolution rules.
+- SQLite 持久化已经覆盖会话、消息、工具运行、任务、权限、记忆索引、成本日志等核心数据
+- Schema 通过 migration 维护，后续演进有明确约束
+- 对旧消息已有结构化消息块迁移逻辑，便于统一渲染层展示
 
-## 当前状态 / Status
+## 模式一览
+
+当前内置模式不只有 Agent，还包括一组不同工作意图的模式：
+
+| 模式 | 作用 |
+| --- | --- |
+| `chat` | 普通对话，偏轻量交流 |
+| `agent` | 面向项目执行任务，偏行动型 |
+| `plan` | 只读调研和方案输出，不直接改文件 |
+| `pipeline` | 多阶段多角色编排 |
+| `writing` | 文案、润色、翻译、写作辅助 |
+| `code` | 编程、排障、代码审阅 |
+| `learning` | 解释概念、教学式回答 |
+| `research` | 做信息收集、归纳、对比 |
+| `brainstorm` | 发散式想法探索 |
+| `translate` | 翻译与双语整理 |
+| `summarize` | 总结长文本或长对话 |
+
+## 工具系统
+
+当前 Agent 已经挂接一组本地工具，不只是单一的代码编辑：
+
+- 文件读取与检索: `Read`、`Glob`、`Grep`、`ListDir`
+- 文件改动: `Write`、`Edit`、`Delete`
+- 终端执行: `Bash`
+- 任务规划: `TodoWrite`、`Task`
+- 外部信息: `WebSearch`、`WebFetch`
+- 代码质量辅助: `ReadLints`
+- 记忆系统: `MemoryRead`、`MemoryWrite`
+- 技能入口: `Skill`
+
+这意味着它的目标不是“回答代码问题”，而是“在可控边界内完成一轮本地工作”。
+
+## 数据与持久化
+
+当前数据库 migration 已经覆盖多个阶段，核心数据大致包括：
+
+- `project`
+- `conversation`
+- `message`
+- `message_part`
+- `tool_run`
+- `agent_todo`
+- `agent_task`
+- `permission_rule`
+- `memory_index`
+- `agent_cost_log`
+- `provider_config`
+- `model_config`
+- `mcp_server`
+
+这些数据分别支撑：
+
+- 项目和会话上下文
+- 结构化消息与工具调用回放
+- Todo 和长任务状态
+- 权限规则记忆
+- 本地记忆索引
+- 模型成本统计
+- 服务商 / 模型 / MCP 配置
+
+## 安全边界
+
+项目当前的安全设计重点不是“绝对沙箱”，而是“桌面本地执行前提下的可控性”：
+
+- 渲染进程不直接访问文件系统或数据库
+- 高权限能力统一通过 `preload` 桥接
+- 工具调用经过 permission gate
+- 破坏性操作与高风险 Bash 会触发审批
+- 权限规则以持久化形式记录，减少重复弹窗
+
+如果你把它理解成“一个有明确边界的本地 Agent runtime + 桌面 UI”，会比把它理解成普通聊天应用更准确。
+
+## 当前状态
 
 > **Early Development**  
-> 现在已经不是空壳，但还处在“架构搭起来、能力持续补完”的阶段。  
-> The project is no longer an empty shell, but it is still in the stage of expanding and stabilizing its core capabilities.
+> 现在已经不是空壳，但还处在“架构搭起来、能力持续补完”的阶段。
 
-- [x] Electron + React + SQLite 基础架构 / Base Electron + React + SQLite architecture
-- [x] 多服务商与模型配置 / Multi-provider and model configuration
-- [x] Agent / Plan / Pipeline 基本模式 / Core Agent, Plan, and Pipeline modes
-- [x] 权限审批、任务恢复、成本记录 / Permission approval, task recovery, and cost tracking
-- [x] MCP 配置与连通性测试 / MCP configuration and connectivity testing
-- [ ] 更完整的技能系统 / A more complete skill system
-- [ ] 更强的工作区与 Git 协同体验 / Better workspace and Git collaboration
-- [ ] 更成熟的打包与发布流程 / More mature packaging and release flow
-- [ ] 更系统的自动化测试覆盖 / Broader automated test coverage
+- [x] Electron + React + SQLite 基础架构
+- [x] 多服务商与模型配置
+- [x] Agent / Plan / Pipeline 基本模式
+- [x] 权限审批、任务恢复、成本记录
+- [x] MCP 配置与连通性测试
+- [x] 本地工具注册与结构化消息存储骨架
+- [ ] 更完整的技能系统
+- [ ] 更强的工作区与 Git 协同体验
+- [ ] 更成熟的打包与发布流程
+- [ ] 更系统的自动化测试覆盖
 
-## 快速开始 / Quick Start
+## 快速开始
 
-### 环境要求 / Requirements
+### 环境要求
 
 - `Node.js >= 22`
 - `npm >= 10`
 
-### 安装 / Install
+### 安装
 
-仓库根目录是一个 delegator，真正的 Electron 应用在 `./src`。  
-The repository root is a delegator. The actual Electron application lives in `./src`.
+仓库根目录是一个 delegator，真正的 Electron 应用在 `./src`。
 
 ```bash
 npm install
 npm run install:app
 ```
 
-### 启动 / Run
+### 启动
 
 ```bash
 npm run dev
 ```
 
-### 构建 / Build
+### 构建
 
 ```bash
 npm run build
 ```
 
-首次安装或 Electron 版本变化后，如果 `better-sqlite3` 原生模块不匹配，可以执行下面命令。  
-After the first install or when the Electron version changes, run the command below if the `better-sqlite3` native module becomes incompatible.
+首次安装或 Electron 版本变化后，如果 `better-sqlite3` 原生模块不匹配，可以执行下面命令。
 
 ```bash
 npm --prefix src run rebuild:native
 ```
 
-## 常用命令 / Commands
+## 开发说明
 
-| Command | 中文说明 | English Description |
-| --- | --- | --- |
-| `npm run install:app` | 安装 `src` 下应用依赖 | Install app dependencies inside `src` |
-| `npm run dev` | 启动 Electron 开发环境 | Start the Electron dev environment |
-| `npm run build` | 类型检查并构建 | Type-check and build the app |
-| `npm run typecheck` | 仅做 TypeScript 检查 | Run TypeScript checks only |
-| `npm run lint` | 运行 ESLint | Run ESLint |
-| `npm run test` | 运行 Vitest | Run Vitest |
-| `npm run test:ci` | CI 模式测试 | Run tests in CI mode |
-| `npm run pack` | 生成本地打包目录 | Generate a local packaged directory |
-| `npm run dist` | 打正式安装包 | Build release installers |
-| `npm run dist:mac` | 构建 macOS 安装包 | Build macOS installers |
-| `npm run dist:win` | 构建 Windows 安装包 | Build Windows installers |
+如果你准备继续开发这个项目，当前有几条重要约束值得先知道：
 
-## 项目结构 / Project Layout
+- 根目录脚本是代理，真正应用在 `./src`
+- 数据库 schema 通过 migration 演进，已发布 migration 不应回写修改
+- Plan 模式是只读模式，不能直接视作 Agent 模式的轻量别名
+- 新工具要接入统一注册表和权限体系，而不是直接在 UI 层调用
+- 结构化消息渲染依赖 `message_part` / `tool_run` 等表，不建议再退回纯文本消息模型
+
+## 常用命令
+
+| Command | 说明 |
+| --- | --- |
+| `npm run install:app` | 安装 `src` 下应用依赖 |
+| `npm run dev` | 启动 Electron 开发环境 |
+| `npm run build` | 类型检查并构建 |
+| `npm run typecheck` | 仅做 TypeScript 检查 |
+| `npm run lint` | 运行 ESLint |
+| `npm run test` | 运行 Vitest |
+| `npm run test:ci` | CI 模式测试 |
+| `npm run pack` | 生成本地打包目录 |
+| `npm run dist` | 打正式安装包 |
+| `npm run dist:mac` | 构建 macOS 安装包 |
+| `npm run dist:win` | 构建 Windows 安装包 |
+
+## 项目结构
 
 ```text
 .
 ├── README.md
+├── README.en.md
 ├── docs/
 │   └── architecture.md
 ├── src/
-│   ├── main/               Electron main process
-│   │   ├── agent/          Agent runtime, tools, permissions, memory, MCP
-│   │   ├── ai/             Multi-protocol model adapters
-│   │   ├── db/             SQLite and migrations
-│   │   ├── git/            Git-related capabilities
-│   │   ├── ipc/            IPC registration
-│   │   └── security/       Security boundary logic
-│   ├── preload/            window.electronAPI bridge
-│   ├── renderer/src/       React UI
-│   └── shared/             Shared contracts between main and renderer
-└── package.json            Root-level script delegator
+│   ├── main/               Electron 主进程
+│   │   ├── agent/          Agent runtime、tools、permissions、memory、MCP
+│   │   ├── ai/             多协议模型适配层
+│   │   ├── db/             SQLite 与 migrations
+│   │   ├── git/            Git 相关能力
+│   │   ├── ipc/            IPC 注册
+│   │   └── security/       安全边界相关逻辑
+│   ├── preload/            window.electronAPI 桥接
+│   ├── renderer/src/       React 界面
+│   └── shared/             主进程和前端共享协议
+└── package.json            根目录脚本代理
 ```
 
-## 路线图 / Roadmap
+## 还可以继续补什么？
 
-接下来更值得继续打磨的方向大概有这些：  
-The next meaningful areas to improve are likely these:
+如果后续要把它整理成更成熟的开源仓库，通常还会继续补这些内容：
 
-- 做更完整的工作区上下文和代码执行体验  
-  Build a richer workspace context and code execution experience.
-- 补强 Agent 技能系统和工具扩展协议  
-  Strengthen the agent skill system and tool extension protocol.
-- 继续完善权限策略、恢复机制和长期记忆  
-  Continue improving permission policies, recovery flows, and long-term memory.
-- 把 Pipeline 从基础三阶段推进到更稳定的多角色协作  
-  Evolve the pipeline from a basic three-stage flow into more stable multi-role collaboration.
-- 提升桌面端发布、升级、诊断和跨平台体验  
-  Improve desktop release, update, diagnostics, and cross-platform experience.
+- `CONTRIBUTING.md`
+- `CODE_OF_CONDUCT.md`
+- issue / PR 模板
+- 发布说明与版本变更记录
+- 更具体的截图、动图和演示流程
+- 更完整的 English docs / architecture docs / API docs
 
-## 文档 / Docs
+## 路线图
 
-- 架构说明 / Architecture: [docs/architecture.md](./docs/architecture.md)
+接下来更值得继续打磨的方向大概有这些：
+
+- 做更完整的工作区上下文和代码执行体验
+- 补强 Agent 技能系统和工具扩展协议
+- 继续完善权限策略、恢复机制和长期记忆
+- 把 Pipeline 从基础三阶段推进到更稳定的多角色协作
+- 提升桌面端发布、升级、诊断和跨平台体验
+- 增加更细粒度的成本与运行可观测性
+
+## FAQ
+
+### 它是网页产品还是桌面应用？
+
+当前是 Electron 桌面应用。
+
+### 它会不会直接乱改文件？
+
+设计上不会把所有写能力直接暴露给前端 UI，真正执行通过 Agent runtime 和权限审批链路进入。
+
+### Plan 和 Agent 的差别是什么？
+
+`Plan` 负责调研、澄清和输出方案，`Agent` 负责执行。两者不是同一个模式换皮，而是职责分层。
+
+### 它是不是只支持一个模型厂商？
+
+不是。当前代码里已经有多协议适配层，也支持自定义服务商和模型。
+
+## 文档
+
+- 架构说明: [docs/architecture.md](./docs/architecture.md)
 
 ## License
 
-本项目采用 MIT 协议开源，可用于使用、复制、修改、分发和商用。  
-This project is open-sourced under the MIT license and may be used, copied, modified, distributed, and used commercially.
+本项目采用 MIT 协议开源，可用于使用、复制、修改、分发和商用。

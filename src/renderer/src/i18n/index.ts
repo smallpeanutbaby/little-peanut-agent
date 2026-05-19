@@ -59,9 +59,9 @@ void i18n
             plan:       {
               name: "计划",
               desc: "先调研代码、再反问确认细节，最后输出实施方案；确认后一键交给 Agent 执行",
-              execute: "让 Agent 按此计划执行",
-              editHint: "可直接编辑下方方案，确认后交给 Agent 执行",
-              clarifyHint: "在下方输入框回复你的选择，或发送「直接出方案」跳过确认"
+              execute: "用 Agent 构建",
+              editHint: "审阅并编辑方案，满意后点击下方按钮开始改代码",
+              clarifyHint: "点击选项可填入输入框，或发送「直接出方案」跳过确认"
             },
             pipeline:   { name: "流水线", desc: "多模型协作：制定计划→执行工作→审查结果，三阶段自动流转" },
             writing:    { name: "写作",   desc: "起草、润色、改写、翻译，文笔流畅" },
@@ -486,8 +486,8 @@ void i18n
             plan:       {
               name: "Plan",
               desc: "Survey the codebase, ask clarifying questions, then deliver an implementation plan — hand off to Agent when ready",
-              execute: "Execute plan with Agent",
-              editHint: "Edit the plan below, then hand off to Agent when ready",
+              execute: "Build with Agent",
+              editHint: "Review and edit the plan, then build when ready",
               clarifyHint: "Reply with your choices below, or send \"直接出方案\" to skip clarification"
             },
             pipeline:   { name: "Pipeline",  desc: "Multi-model collaboration: plan → execute → review in three automated stages" },

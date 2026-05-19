@@ -3,7 +3,7 @@
  *
  * Reads `message_part` rows and groups them by message. Each message:
  *  - "user" → right-aligned bubble
- *  - "assistant" → left-aligned: reasoning (collapsible) → markdown → tool cards
+ *  - "assistant" → reasoning → tool cards → markdown (plan mode: tools then plan panel)
  *
  * Tool cards pair tool_use with their matching tool_result for inline display.
  */
@@ -18,7 +18,8 @@ import type {
 } from "@shared/types";
 import { ToolUseCard, ToolResultCard } from "./AgentToolCards";
 import { renderPlanAssistantContent } from "./PlanPanel";
-import { isFinalPlanMessage } from "@shared/plan-ui";
+import { PlanResearchGroup } from "./PlanResearchGroup";
+import { isPlanClarificationOnly, isPlanFinalPlan } from "@shared/plan-ui";
 
 interface AgentMessageListProps {
   conversationId: string;
@@ -45,6 +46,7 @@ interface AgentMessageListProps {
   planExecuteLabel?: string;
   planEditHint?: string;
   planClarifyHint?: string;
+  onPrefillComposer?: (text: string) => void;
 }
 
 interface RenderedMessage {
@@ -67,7 +69,8 @@ export function AgentMessageList({
   streamingInProgress,
   planExecuteLabel = "让 Agent 按此计划执行",
   planEditHint = "可直接编辑下方方案，确认后交给 Agent 执行",
-  planClarifyHint = "在下方输入框回复你的选择，或发送「直接出方案」跳过确认"
+  planClarifyHint = "在下方输入框回复你的选择，或发送「直接出方案」跳过确认",
+  onPrefillComposer
 }: AgentMessageListProps) {
   const [partsByMessage, setPartsByMessage] = useState<Record<string, AgentMessagePart[]>>({});
 
@@ -140,6 +143,7 @@ export function AgentMessageList({
           planExecuteLabel={planExecuteLabel}
           planEditHint={planEditHint}
           planClarifyHint={planClarifyHint}
+          onPrefillComposer={onPrefillComposer}
         />
       ))}
     </div>
@@ -159,7 +163,8 @@ function MessageRow({
   streamingInProgress,
   planExecuteLabel,
   planEditHint,
-  planClarifyHint
+  planClarifyHint,
+  onPrefillComposer
 }: {
   message: RenderedMessage;
   youLabel: string;
@@ -174,8 +179,10 @@ function MessageRow({
   planExecuteLabel?: string;
   planEditHint?: string;
   planClarifyHint?: string;
+  onPrefillComposer?: (text: string) => void;
 }) {
   const isUser = message.role === "user";
+  const isPlanMode = currentModeId === "plan";
   const toolResultParts = message.parts.filter((p) => p.type === "tool_result");
   const textParts = message.parts.filter((p) => p.type === "text");
   const reasoningParts = message.parts.filter((p) => p.type === "reasoning");
@@ -234,9 +241,15 @@ function MessageRow({
             isLastAssistant && onExecuteAsAgent ? onExecuteAsAgent : undefined,
           executeLabel: planExecuteLabel ?? "让 Agent 按此计划执行",
           editHint: planEditHint ?? "",
-          hintReply: planClarifyHint ?? ""
+          hintReply: planClarifyHint ?? "",
+          onPrefillComposer
         })
       : null;
+  const showPlanAtEnd =
+    planPanel !== null && (isPlanFinalPlan(text) || isPlanClarificationOnly(text));
+  const toolParts = orderedParts.filter((p) => p.type === "tool_use");
+  const planResearchStreaming =
+    isPlanMode && isLastAssistant && streamingInProgress && !showPlanAtEnd;
 
   return (
     <div className="flex flex-col items-start gap-2">
@@ -250,13 +263,20 @@ function MessageRow({
         </div>
       ) : null}
 
-      {planPanel ? <div className="w-full">{planPanel}</div> : null}
+      {isPlanMode && toolParts.length > 0 ? (
+        <PlanResearchGroup
+          parts={toolParts}
+          toolRunsById={toolRunsById}
+          resultByToolCallId={resultByToolCallId}
+          defaultCollapsed={showPlanAtEnd}
+          streaming={planResearchStreaming}
+        />
+      ) : null}
 
-      {orderedParts.map((p) => {
+      {!isPlanMode ? orderedParts.map((p) => {
         if (p.type === "text") {
           const t = (p.textContent ?? "").trim();
           if (!t) return null;
-          if (planPanel) return null;
           return (
             <div
               key={p.id}
@@ -281,45 +301,27 @@ function MessageRow({
           );
         }
         return null;
-      })}
+      }) : null}
 
-      {/* Plan-mode handoff button:
-       *
-       * When the conversation is in plan mode and THIS is the most
-       * recent assistant message, surface a "let Agent execute" button.
-       * Clicking it hands the plan markdown back to the owner, which
-       * flips conv.modeId → "agent" and dispatches a new user message.
-       *
-       * Gated on:
-       *  - not currently streaming (otherwise we'd hand off a partial plan)
-       *  - the message has at least some text to hand off
-       *  - the parent wired up the callback
-       */}
-      {!planPanel &&
-      currentModeId === "plan" &&
-      isLastAssistant &&
-      !streamingInProgress &&
-      onExecuteAsAgent &&
-      isFinalPlanMessage(
-        textParts.length > 0
-          ? textParts.map((p) => p.textContent ?? "").join("")
-          : message.fallbackContent
-      ) ? (
-        <button
-          type="button"
-          onClick={() => {
-            const planText =
-              textParts.length > 0
-                ? textParts.map((p) => p.textContent ?? "").join("")
-                : message.fallbackContent;
-            onExecuteAsAgent(planText);
-          }}
-          className="mt-1 inline-flex items-center gap-1.5 rounded-lg border border-[var(--lp-accent-border,var(--lp-border))] bg-[var(--lp-accent-bg,rgba(56,189,248,0.10))] px-3 py-1.5 text-[13px] font-medium text-[var(--lp-text)] hover:bg-[var(--lp-accent-bg-hover,rgba(56,189,248,0.18))] transition"
-        >
-          <span aria-hidden>⚡</span>
-          <span>让 Agent 按此计划执行</span>
-        </button>
-      ) : null}
+      {isPlanMode && !showPlanAtEnd
+        ? orderedParts.map((p) => {
+            if (p.type !== "text") return null;
+            const t = (p.textContent ?? "").trim();
+            if (!t) return null;
+            return (
+              <div
+                key={p.id}
+                className="max-w-full rounded-2xl px-1 py-1 text-[14px] leading-relaxed text-[var(--lp-text)]"
+              >
+                <div className="lp-markdown">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{p.textContent ?? ""}</ReactMarkdown>
+                </div>
+              </div>
+            );
+          })
+        : null}
+
+      {planPanel ? <div className="w-full">{planPanel}</div> : null}
     </div>
   );
 }

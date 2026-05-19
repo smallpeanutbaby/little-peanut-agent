@@ -54,12 +54,15 @@ void TOOL_ICON;
 export function ToolUseCard({
   part,
   liveStatus,
-  resultPart
+  resultPart,
+  variant = "default"
 }: {
   part: AgentMessagePart;
   liveStatus?: AgentToolRunStatus;
   resultPart?: AgentMessagePart | null;
+  variant?: "default" | "plan-compact";
 }) {
+  const compact = variant === "plan-compact";
   const status: AgentToolRunStatus = liveStatus ?? (part.isError ? "errored" : "completed");
   const badge = STATUS_BADGE[status];
   const name = part.toolName ?? "tool";
@@ -70,13 +73,15 @@ export function ToolUseCard({
   const isError = resultPart?.isError ?? part.isError;
 
   const isDone = status === "completed" || status === "errored" || status === "denied" || status === "cancelled";
+  const showResult = isDone && hasResult && !!resultText && !compact;
 
   return (
-    <div className={`group rounded-xl border overflow-hidden transition-all ${
-      isError ? "border-red-500/25" : "border-[var(--lp-border)]"
-    }`}>
-      {/* Header row */}
-      <div className="flex items-center gap-2.5 px-3 py-2">
+    <div
+      className={`group overflow-hidden rounded-xl border transition-all ${
+        isError ? "border-red-500/25" : "border-[var(--lp-border)]"
+      } ${compact ? "bg-white/[0.02]" : ""}`}
+    >
+      <div className={`flex items-center gap-2.5 ${compact ? "px-2 py-1.5" : "px-3 py-2"}`}>
         <ToolIcon name={name} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
@@ -96,8 +101,7 @@ export function ToolUseCard({
         </div>
       </div>
 
-      {/* Bash command preview */}
-      {name === "Bash" && subtitle ? (
+      {!compact && name === "Bash" && subtitle ? (
         <div className="border-t border-[var(--lp-border)] bg-black/25 px-3 py-2">
           <code className="block overflow-x-auto whitespace-pre-wrap break-all font-mono text-[12px] text-[var(--lp-text)]/80">
             <span className="text-emerald-400/60">$ </span>{subtitle}
@@ -105,8 +109,7 @@ export function ToolUseCard({
         </div>
       ) : null}
 
-      {/* Result body — auto-expanded */}
-      {isDone && hasResult && resultText ? (
+      {showResult ? (
         <div className={`border-t px-3 py-2 ${isError ? "border-red-500/20 bg-red-500/[0.04]" : "border-[var(--lp-border)] bg-black/15"}`}>
           <pre className="max-h-[200px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-[var(--lp-soft-text)]">
             {resultText.length > 2000 ? resultText.slice(0, 2000) + "\n…(truncated)" : resultText}
@@ -114,8 +117,13 @@ export function ToolUseCard({
         </div>
       ) : null}
 
-      {/* Toggle raw input (collapsed by default) */}
-      {part.inputJson ? (
+      {compact && isError && resultText ? (
+        <div className="border-t border-red-500/20 px-2 py-1 text-[11px] text-red-300/90 truncate">
+          {resultText.split("\n")[0]}
+        </div>
+      ) : null}
+
+      {!compact && part.inputJson ? (
         <div className="border-t border-[var(--lp-border)]">
           <button
             type="button"

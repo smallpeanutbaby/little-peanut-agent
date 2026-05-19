@@ -209,17 +209,21 @@ function PipelineStageBar({ stage, model }: { stage: string; model: string }) {
  * — this matches what the runtime layer actually enforces (write tools
  * are filtered out in `src/main/agent/ipc.ts`). Sets the user up to
  * expect the handoff button at the end of the reply instead of being
- * confused by the absence of tool cards.
+ * expect read-only tool cards during investigation, then the plan panel.
  */
 function PlanModeBanner() {
   return (
     <div className="mx-auto flex w-full max-w-[860px] items-center gap-2 px-6 py-1.5">
-      <div className="flex items-center gap-2 rounded-full border border-sky-400/30 bg-sky-400/10 px-3 py-1.5 text-[12px] font-medium text-sky-300">
-        <span aria-hidden>📐</span>
-        <span>计划模式 · 只读</span>
-        <span className="text-[10px] text-sky-300/70">
-          (只读 · 会先向你确认细节，定稿后再点末尾按钮交给 Agent 执行)
-        </span>
+      <div className="flex flex-wrap items-center gap-2 rounded-full border border-[var(--lp-border)] bg-[var(--lp-panel)] px-3 py-1.5 text-[12px] text-[var(--lp-text)]">
+        <span className="font-medium text-[var(--lp-text)]">Plan</span>
+        <span className="text-[var(--lp-muted)]">·</span>
+        <span className="text-[var(--lp-soft-text)]">只读调研</span>
+        <span className="text-[var(--lp-muted)]">→</span>
+        <span className="text-[var(--lp-soft-text)]">确认细节</span>
+        <span className="text-[var(--lp-muted)]">→</span>
+        <span className="text-[var(--lp-soft-text)]">审阅方案</span>
+        <span className="text-[var(--lp-muted)]">→</span>
+        <span className="font-medium text-emerald-300/90">用 Agent 构建</span>
       </div>
     </div>
   );
@@ -347,6 +351,11 @@ export function ChatPanel({
   const listRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const prefillComposer = useCallback((text: string) => {
+    setInput((prev) => (prev.trim() ? `${prev.trim()}\n${text}` : text));
+    queueMicrotask(() => textareaRef.current?.focus());
+  }, []);
 
   /**
    * Auto-grow textarea between MIN_H and MAX_H.
@@ -607,6 +616,7 @@ export function ChatPanel({
               planExecuteLabel={t("modes.plan.execute")}
               planEditHint={t("modes.plan.editHint")}
               planClarifyHint={t("modes.plan.clarifyHint")}
+              onPrefillComposer={activeModeId === "plan" ? prefillComposer : undefined}
             />
           </>
         ) : (

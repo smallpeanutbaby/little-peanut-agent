@@ -52,6 +52,7 @@ void TaskTool;
 void (null as unknown as LlmStreamEvent);
 
 interface ActiveRun {
+  conversationId: string;
   controller: AbortController;
   /** WebContents we send events to. */
   sender: WebContents;
@@ -145,6 +146,7 @@ export function registerAgentIpc(database: AppDatabase): void {
       const permissionChannel = agentPermissionChannel(runId);
 
       const run: ActiveRun = {
+        conversationId: input.conversationId,
         controller,
         sender,
         pendingPermissions: new Map()
@@ -508,7 +510,12 @@ export function registerAgentIpc(database: AppDatabase): void {
   );
 
   ipcMain.handle(IPC.agent.listInterrupted, () => {
-    return database.agent.listInterruptedConversations();
+    const activeConversationIds = new Set(
+      [...activeRuns.values()].map((r) => r.conversationId)
+    );
+    return database.agent
+      .listInterruptedConversations()
+      .filter((row) => !activeConversationIds.has(row.id));
   });
 
   ipcMain.handle(IPC.agent.discardInterrupted, (_e, conversationId: string) => {
@@ -586,6 +593,7 @@ export function registerAgentIpc(database: AppDatabase): void {
       const permissionChannel = agentPermissionChannel(runId);
 
       const run: ActiveRun = {
+        conversationId,
         controller,
         sender,
         pendingPermissions: new Map()

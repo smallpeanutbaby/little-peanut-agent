@@ -602,8 +602,9 @@ export class AgentStore {
   }
 
   /** Return every conversation row whose `last_run_status` is
-   *  'in_progress' — i.e. the agent died mid-stream. The UI shows a
-   *  resume-or-discard toast on app boot for each. */
+   *  'in_progress'. Live runs also use this status, so IPC must exclude
+   *  conversations with an entry in `activeRuns` before surfacing the
+   *  resume toast — otherwise a healthy in-flight run looks interrupted. */
   listInterruptedConversations(): Array<{
     id: string;
     name: string | null;

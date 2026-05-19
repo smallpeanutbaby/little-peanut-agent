@@ -63,3 +63,56 @@ export function extractSection(markdown: string, heading: string): string | null
   if (!m) return null;
   return m[0].replace(new RegExp(`^##\\s*${heading}\\s*`, "i"), "").trim();
 }
+
+export type PlanUiPhase = "investigating" | "clarifying" | "plan_ready";
+
+/** Map assistant markdown to a coarse UI phase (Cursor-style status). */
+export function getPlanUiPhase(text: string, streaming: boolean): PlanUiPhase {
+  if (isPlanFinalPlan(text)) return streaming ? "investigating" : "plan_ready";
+  if (isPlanClarificationOnly(text)) return "clarifying";
+  return "investigating";
+}
+
+export interface PlanStep {
+  id: string;
+  text: string;
+}
+
+/** Numbered / bullet lines under ## 实施方案. */
+export function parsePlanSteps(markdown: string): PlanStep[] {
+  const section = extractSection(markdown, "实施方案");
+  if (!section) return [];
+  const steps: PlanStep[] = [];
+  let idx = 0;
+  for (const line of section.split("\n")) {
+    const m = line.match(/^\s*(?:\d+[.)]\s+|[-*]\s+)(.+)$/);
+    if (m?.[1]) steps.push({ id: `step-${++idx}`, text: m[1].trim() });
+  }
+  return steps;
+}
+
+/** Paths from ## 涉及文件清单 (backticks or bullet lines). */
+export function parsePlanFilePaths(markdown: string): string[] {
+  const section = extractSection(markdown, "涉及文件清单");
+  if (!section) return [];
+  const paths = new Set<string>();
+  for (const line of section.split("\n")) {
+    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
+    const raw = bullet?.[1]?.trim() ?? "";
+    if (!raw) continue;
+    const ticked = raw.match(/`([^`]+)`/);
+    paths.add((ticked?.[1] ?? raw).trim());
+  }
+  return [...paths];
+}
+
+/** Body shown in the plan editor — implementation sections only. */
+export function extractPlanEditableBody(markdown: string): string {
+  const headings = ["实施方案", "涉及文件清单", "风险与注意事项"] as const;
+  const chunks: string[] = [];
+  for (const h of headings) {
+    const body = extractSection(markdown, h);
+    if (body) chunks.push(`## ${h}\n${body}`);
+  }
+  return chunks.length > 0 ? chunks.join("\n\n") : markdown.trim();
+}
