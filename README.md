@@ -1,97 +1,86 @@
 # Little Peanut
 
-> 一个本地优先的多模型桌面 AI 客户端 — 所有配置、密钥、对话、附件全部存在本地 SQLite，密钥用 Electron `safeStorage` 加密落盘。
+一个本地优先的桌面 AI 工作台，目标是把多模型聊天、Agent 执行、计划模式、Pipeline 编排、项目工作区和本地数据持久化整合到同一个 Electron 应用里。
 
-基于 **Electron + React 19 + TypeScript + Tailwind v4**，使用 `electron-vite` 构建，UI 风格走 Cursor / Claude Desktop 的暗色质感路线。
+当前实现重点已经不只是“聊天客户端”，而是逐步演进成一个类 Codex / Claude Code / Cursor Agent 的本地执行环境：
+- 多模型对话与服务商配置
+- Agent 模式、Plan 模式、Pipeline 模式
+- MCP 接入与工具执行
+- 项目级工作区、权限审批、运行中任务、Todo/计划面板
+- 全量本地 SQLite 持久化
 
----
+## 当前能力
 
-## 当前功能
+### 多模型与服务商
 
-### 模型与服务商
+- 内置多家服务商目录，覆盖 OpenAI、Anthropic、Gemini 以及多种 OpenAI 兼容端点。
+- 主进程适配层支持 `openai-chat`、`openai-responses`、`openai-compatible`、`anthropic-messages`、`google-gemini` 多种协议。
+- 支持自定义服务商、自定义模型、模型能力标记和推理协议配置。
+- 支持模型启用/禁用、批量启用/禁用、自定义模型新增/删除。
+- 服务商配置、模型配置、自定义模型都会持久化到本地 SQLite。
 
-- **内置主流服务商目录**：OpenAI、Anthropic、Google Gemini、DeepSeek、智谱 GLM、月之暗面 Moonshot、阿里 Qwen3、百度文心、MiniMax 等。
-- **三大协议适配器**：`openai-chat` / `anthropic` / `gemini`，统一封装在 `src/main/ai/adapter.ts`。
-- **自定义服务商**：支持新增任意 OpenAI 兼容（第三方）/ Anthropic / Gemini 协议的端点，新增即写入本地 DB 持久化。
-- **思考预算（Reasoning Budget）**：按模型能力给出 `off / minimal / low / medium / high / max` 等档位，UI 上对不支持的模型自动隐藏。
-- **连通性检查**：对单个服务商一键发起带 `/models` 或最小 prompt 的连通性探测，返回耗时 + 状态。
-- **单服务商显式"保存"按钮**：避免依赖失焦保存。
-- **API Key 安全存储**：通过 Electron `safeStorage` 加密后写入 SQLite，渲染进程拿不到明文。
+### 聊天与模式
 
-### 对话能力
+- 支持普通聊天、Agent、Plan、Pipeline、Writing、Code、Learning、Research、Brainstorm、Translate、Summarize 等模式。
+- 每种模式可提供独立的 system prompt、默认温度、默认推理预算、上下文窗口和字符预算。
+- 聊天区支持模型选择、推理预算切换、流式输出、消息块渲染和工具调用结果展示。
+- 主题颜色、文本颜色、语言切换会持久化到本地数据库。
 
-- **8 种对话模式**（chat / writing / code / learning / research / brainstorm / translate / summarize），每种模式自带 system prompt、默认温度、默认思考预算、上下文窗口与字符预算。
-- **级联模型选择器**：在输入框下方先选 *服务商 ▾*，再选 *该服务商下的模型 ▾*。
-- **流式输出（SSE）**：边收边渲染，支持中途取消。
-- **思考过程展示开关**：可显示 / 隐藏 reasoning 段。
-- **上下文压缩**：按消息条数 + 字符预算双重门槛裁剪历史消息，永远保留最后一条用户消息和 system prompt。
-- **图片多模态输入**：支持点击 / 拖拽 / 直接粘贴上传图片，缩略图预览，发送时分别按 OpenAI Vision / Anthropic content blocks / Gemini parts 三种格式打包。
-- **空 assistant 占位过滤**：避免旧版本残留的空 assistant 消息让 API 报 "must not be empty"。
-- **失败重试**：单条消息失败可一键重发。
+### Agent / Plan / Pipeline
 
-### 项目与对话组织
+- Agent 模式支持运行期工具调用、权限审批、上下文压缩、任务恢复、中断任务列表、成本汇总等能力。
+- Plan 模式支持“先澄清，再出方案”的只读规划流，并带有结构化计划识别与前端计划面板。
+- Pipeline 模式支持“planner / executor / reviewer”三段式执行编排，并提供前端 Pipeline 配置入口。
+- 运行中的任务、Todo 列表、工具执行卡片、审批弹窗、恢复提示都已有对应 UI。
 
-- 侧边栏 **项目**与**对话**两个分组都支持点击展开 / 折叠（持久化）。
-- 对话可绑定到项目下，标题根据首条消息自动派生（图片消息生成 `[图片]` 标题）。
-- 删除 / 重命名对话、项目均直接落 SQLite。
+### 数据与本地优先
 
-### 编辑器 / 终端
-
-- 内嵌 **Monaco** 编辑器和 **xterm** 终端的演示壳子（`EditorTerminalShell.tsx`），为后续 Codex 风格 Agent IDE 做准备。
-
-### MCP（Model Context Protocol）
-
-- 主进程内置一个轻量 MCP client（`src/main/mcp/client.ts`），为后续接入工具 / 资源做准备。
-
-### 通用 UI
-
-- **主题切换**：浅 / 深双主题，CSS 变量 + 主题 modal。
-- **i18n**：内置中英双语切换（i18next）。
-- **持久化 UI 状态**：侧边栏宽度、展开状态、模式偏好等都用 `usePersistedState` 落地。
-- **无侵入滚动条**：全局细滚动条，hover 才显形。
-- **暗色原生控件适配**：全局 `<select>` 强制 `color-scheme: dark`，Windows 上不再出现"白底白字"。
-
----
+- 核心业务数据使用 `better-sqlite3` 存储。
+- schema 已进入版本化 migration 管理，避免后续演进时靠零散 `ALTER TABLE` 修补。
+- Agent 相关结构化数据已覆盖：
+  - `message_part`
+  - `tool_run`
+  - `agent_todo`
+  - `agent_task`
+  - `permission_rule`
+  - `memory_index`
+  - `agent_cost_log`
+- 对话、项目、UI 设置、模型设置、服务商设置、自定义模型都在本地持久化。
 
 ## 技术栈
 
 | 层 | 技术 |
 |---|---|
-| 桌面壳 | Electron 36 |
+| 桌面壳 | Electron 39 |
 | 构建 | electron-vite + Vite 7 |
 | 前端 | React 19、TypeScript 5.9、Tailwind v4、Zustand |
-| 编辑器 / 终端 | Monaco、xterm |
-| 国际化 | i18next + react-i18next |
 | 本地存储 | better-sqlite3 |
-| 安全存储 | Electron `safeStorage` |
+| 国际化 | i18next + react-i18next |
+| 编辑器 / 终端 | Monaco、xterm |
 | 测试 | Vitest |
-
----
 
 ## 目录结构
 
-```
+```text
 src/
-├── main/                 主进程
-│   ├── ai/adapter.ts     三协议 AI adapter
-│   ├── db/database.ts    SQLite schema + 读写
-│   ├── ipc/              IPC handler 注册
-│   ├── mcp/client.ts     MCP 客户端
-│   └── security/         API Key 加密落盘
-├── preload/              预加载脚本（暴露 electronAPI）
-├── renderer/             React UI
-│   └── src/
-│       ├── App.tsx       路由 / 全局状态
-│       ├── components/   ChatPanel / Settings / Modals…
-│       ├── constants/    服务商目录 / 主题 token
-│       ├── hooks/        usePersistedState…
-│       ├── i18n/         中英文案
-│       └── store/        Zustand stores
-├── shared/               主/渲染共享类型与常量
-└── tests/                Vitest 测试
+├── main/
+│   ├── agent/           Agent 运行时、工具、权限、MCP、上下文处理
+│   ├── ai/              多协议模型适配层
+│   ├── db/              SQLite 访问与 migrations
+│   └── ipc/             主进程 IPC 注册
+├── preload/             electronAPI 桥接层
+├── renderer/src/
+│   ├── components/      聊天、计划、Pipeline、审批、任务等界面
+│   ├── i18n/            中英文案
+│   ├── store/           前端状态
+│   └── App.tsx          主界面容器
+├── shared/              主/渲染共享类型、模式、IPC 常量
+└── tests/               Vitest 测试
 ```
 
----
+## 文档
+
+- 架构与数据说明：[`docs/architecture.md`](./docs/architecture.md)
 
 ## 本地开发
 
@@ -101,36 +90,34 @@ npm install
 npm run dev
 ```
 
-> **修改 preload 后必须完全关闭窗口再 `npm run dev`** —— preload 不参与 HMR，否则会出现 `electronAPI.xxx 不可用` 这类灵异错误。
+说明：
+- 修改 `preload` 后建议完全关闭 Electron 窗口再重启开发环境，避免桥接接口热更新不完整。
+- 首次安装或 Electron 版本变化后，可能需要执行 `npm run rebuild:native`。
 
----
-
-## 构建 / 打包
-
-```bash
-cd src
-npm run build         # 仅产出 dist + dist-electron
-npm run pack          # 打包到 release/<version>/ 目录（不签名）
-npm run dist:win      # Windows nsis + portable
-npm run dist:mac      # macOS dmg + zip（x64 + arm64）
-npm run dist:all      # mac + win 全平台
-```
-
----
-
-## 脚本一览
+## 常用命令
 
 | 命令 | 用途 |
 |---|---|
-| `npm run dev` | 开发模式（Vite + Electron） |
-| `npm run build` | 类型检查 + 打 bundle |
+| `npm run dev` | 开发模式 |
+| `npm run build` | 类型检查并构建 |
 | `npm run typecheck` | 仅类型检查 |
-| `npm run lint` / `npm run lint:fix` | ESLint |
-| `npm run format` / `npm run format:write` | Prettier |
-| `npm test` / `npm run test:ci` | Vitest |
-| `npm run rebuild:native` | 针对当前 Electron 版本重建 better-sqlite3 |
+| `npm run test` | 运行 Vitest |
+| `npm run test:ci` | CI 模式测试 |
+| `npm run pack` | 本地打包目录产物 |
+| `npm run dist` | electron-builder 打包 |
 
----
+## 打包
+
+```bash
+cd src
+npm run build
+npm run pack
+```
+
+支持：
+- `npm run dist:mac`
+- `npm run dist:win`
+- `npm run dist:all`
 
 ## License
 
