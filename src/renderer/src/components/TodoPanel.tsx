@@ -6,7 +6,7 @@
  *
  * Hidden when:
  *  - There are no todos yet.
- *  - The active conversation is not in `agent` mode.
+ *  - Parent hides the panel (e.g. review / pipeline modes — todos are Agent/Plan only).
  *
  * The model owns the list; this panel is read-only.
  */

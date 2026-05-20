@@ -29,6 +29,10 @@ export function RunningTasksTray({ projectId }: RunningTasksTrayProps) {
   const { t } = useTranslation();
   const [tasks, setTasks] = useState<AgentTaskItem[]>([]);
   const [open, setOpen] = useState(false);
+  /** User dismissed the whole tray; show again when a new subagent starts. */
+  const [trayDismissed, setTrayDismissed] = useState(false);
+  /** Per-task dismiss for finished rows (still in DB, just hidden in UI). */
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => new Set());
 
   const refresh = useCallback(async () => {
     const api = window.electronAPI;
@@ -55,6 +59,13 @@ export function RunningTasksTray({ projectId }: RunningTasksTrayProps) {
 
   const running = useMemo(() => tasks.filter((t) => ACTIVE_STATUSES.has(t.status)), [tasks]);
 
+  // Re-open the tray when a new subagent actually starts.
+  useEffect(() => {
+    if (running.length > 0) {
+      setTrayDismissed(false);
+    }
+  }, [running.length]);
+
   // Visible set = all active tasks + any finished task that ended in
   // the last FINISHED_TTL_MS. Older completed/failed/killed rows stay
   // in the DB (we still want them for postmortems via a future "task
@@ -62,13 +73,14 @@ export function RunningTasksTray({ projectId }: RunningTasksTrayProps) {
   const visible = useMemo(() => {
     const now = Date.now();
     return tasks.filter((t) => {
+      if (dismissedIds.has(t.id)) return false;
       if (ACTIVE_STATUSES.has(t.status)) return true;
       if (t.endedAt && now - t.endedAt < FINISHED_TTL_MS) return true;
       return false;
     });
-  }, [tasks]);
+  }, [tasks, dismissedIds]);
 
-  if (visible.length === 0) return null;
+  if (trayDismissed || visible.length === 0) return null;
 
   const cancel = async (id: string) => {
     await window.electronAPI?.cancelAgentTask?.(id);
@@ -90,6 +102,18 @@ export function RunningTasksTray({ projectId }: RunningTasksTrayProps) {
           {running.length} / {visible.length}
         </span>
         <span className="ml-1 text-[12px] text-[var(--lp-muted)]">{open ? "▾" : "▸"}</span>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setTrayDismissed(true);
+          }}
+          className="ml-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[var(--lp-soft-text)] hover:bg-white/[0.08] hover:text-[var(--lp-text)]"
+          title={t("tasksTray.dismissTray", { defaultValue: "关闭" })}
+          aria-label={t("tasksTray.dismissTray", { defaultValue: "关闭" })}
+        >
+          ×
+        </button>
       </button>
       {open ? (
         <ul className="max-h-[40vh] space-y-1 overflow-y-auto border-t border-white/6 px-3 py-2">
@@ -120,6 +144,17 @@ export function RunningTasksTray({ projectId }: RunningTasksTrayProps) {
                     {payload?.description ?? task.type}
                   </span>
                   <span className="ml-auto text-[11px] text-[var(--lp-muted)]">{ageLabel}</span>
+                  {!active ? (
+                    <button
+                      type="button"
+                      onClick={() => setDismissedIds((prev) => new Set(prev).add(task.id))}
+                      className="ml-1 flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--lp-soft-text)] hover:bg-white/[0.08] hover:text-[var(--lp-text)]"
+                      title={t("tasksTray.dismissItem", { defaultValue: "移除此项" })}
+                      aria-label={t("tasksTray.dismissItem", { defaultValue: "移除此项" })}
+                    >
+                      ×
+                    </button>
+                  ) : null}
                 </div>
                 {payload?.prompt ? (
                   <div className="mt-1 truncate text-[11.5px] text-[var(--lp-soft-text)]" title={payload.prompt}>

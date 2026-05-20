@@ -16,7 +16,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { buildTool, blockFromText, type Tool, type ToolResult } from "../Tool.js";
-import { validateProjectPath } from "../../permissions/pathValidation.js";
+import { validatePathForTool } from "../../permissions/validatePathForTool.js";
 
 // See Read/index.ts: tolerate `file_path` because most models trained on
 // Claude-Code-style tool catalogues will reach for that name reflexively.
@@ -83,7 +83,7 @@ export const EditTool: Tool<typeof inputSchema, Output> = buildTool({
         errorMessage: "old_string and new_string are identical; nothing to do."
       };
     }
-    const guard = await validateProjectPath(input.path, ctx.projectRoot, {
+    const guard = await validatePathForTool(input.path, ctx.projectRoot, {
       mustExist: true,
       additionalWorkingDirectories: ctx.additionalWorkingDirectories
     });

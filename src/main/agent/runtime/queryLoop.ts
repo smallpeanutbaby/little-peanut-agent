@@ -35,11 +35,13 @@ import { StreamingToolExecutor } from "./StreamingToolExecutor.js";
 import type { ToolExecutionContext } from "./toolExecution.js";
 import type { PermissionGate, PermissionScopeRef } from "../permissions/gate.js";
 import { buildSystemPrompt } from "../context/systemPrompt.js";
+import { listProjectLayout } from "../permissions/pathSuggestions.js";
 import type { ChatMode } from "@shared/modes.js";
 import type { AgentEvent } from "./types.js";
 import { zodToJsonSchema } from "../llm/toolSpec.js";
-import { autocompact, applyPtlFallback } from "../context/compaction.js";
-import { tokensForHistory } from "../context/tokenizer.js";
+import { microcompactLastToolResults } from "../context/compaction.js";
+import { prepareContextForLlm } from "../context/budget.js";
+import { loadCanonicalHistory } from "../context/history.js";
 import { modelContextFor } from "../context/modelLimits.js";
 import { estimateCostUsd } from "../cost/modelCosts.js";
 import {
@@ -180,6 +182,10 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
         }))
     : [];
 
+  const projectLayout = params.projectRoot
+    ? await listProjectLayout(params.projectRoot).catch(() => [] as string[])
+    : [];
+
   const systemPrompt = buildSystemPrompt({
     mode: params.mode,
     projectRoot: params.projectRoot,
@@ -187,7 +193,8 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
     language: params.language,
     tools: params.tools,
     memoryHints,
-    skillHints: params.skillHints
+    skillHints: params.skillHints,
+    projectLayout
   });
 
   const adapter = getCanonicalAdapter(params.provider);
@@ -247,41 +254,29 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
       }
     }
 
-    // Context budgeting: autocompact when we cross 75% of the model's
-    // soft prompt budget; PTL-fallback if even that wouldn't fit under
-    // the model's hard context window. Both passes are pure functions
-    // that return a fresh `messages` array — the on-disk transcript is
-    // never mutated. The renderer keeps showing the full history.
-    //
-    // When think mode is on we shrink the effective promptBudget so the
-    // model has reserved space for its reasoning trace — otherwise the
-    // server is liable to truncate the tail of the response (e.g. tool
-    // arguments JSON), which we used to surface as `__parse_error` bugs.
+    // Context budgeting: compress until history fits under the model's
+    // hard prompt cap (window − output reserve). On-disk transcript and
+    // the renderer UI stay full-fidelity; only the LLM payload shrinks.
     const ctxInfo = modelContextFor(params.model, { thinkBudget: params.thinkBudget });
-    const beforeTokens = tokensForHistory(history);
-    let requestMessages = history;
-    let compactionNotes: string[] = [];
-    if (beforeTokens > ctxInfo.promptBudget * 0.75) {
-      const ac = autocompact(history, ctxInfo.promptBudget);
-      requestMessages = ac.messages;
-      if (ac.metrics.strategy !== "noop") {
-        compactionNotes.push(`autocompact ${ac.metrics.before}→${ac.metrics.after}`);
-      }
-    }
-    const ptl = applyPtlFallback(requestMessages, ctxInfo.contextWindow - (params.maxOutputTokens ?? 4096) - 2000);
-    requestMessages = ptl.messages;
-    if (ptl.metrics.strategy !== "noop") compactionNotes.push(`ptl ${ptl.metrics.before}→${ptl.metrics.after}`);
-    if (compactionNotes.length > 0) {
-      yield { kind: "context_compacted", before: beforeTokens, after: tokensForHistory(requestMessages), notes: compactionNotes };
+    const prepared = prepareContextForLlm(history, ctxInfo, {
+      maxOutputTokens: params.maxOutputTokens
+    });
+    const requestMessages = prepared.messages;
+    if (prepared.compacted) {
+      yield {
+        kind: "context_compacted",
+        before: prepared.before,
+        after: prepared.usedTokens,
+        notes: prepared.notes
+      };
     }
 
-    const usedTokens = tokensForHistory(requestMessages);
     yield {
       kind: "context_budget",
-      usedTokens,
+      usedTokens: prepared.usedTokens,
       budgetTokens: ctxInfo.promptBudget,
       windowTokens: ctxInfo.contextWindow,
-      compacted: compactionNotes.length > 0
+      compacted: prepared.compacted
     };
 
     const request: LlmRequest = {
@@ -953,72 +948,6 @@ function lookupToolName(tools: Tool[], _id: string): string | null {
   // already patches block.name from the `tool_use_start` event in the
   // outer loop; this stays null until that fires.
   return null;
-}
-
-function loadCanonicalHistory(
-  db: AppDatabase,
-  store: AgentStore,
-  conversationId: string,
-  assistantPlaceholderId: string
-): CanonicalMessage[] {
-  const messages = db.listMessages(conversationId);
-  const out: CanonicalMessage[] = [];
-  for (const msg of messages) {
-    if (msg.id === assistantPlaceholderId) continue; // skip the placeholder
-    const parts = store.listPartsForMessage(msg.id);
-    if (parts.length === 0) {
-      // Legacy row without parts. Treat content as a single text block.
-      const blocks: ContentBlock[] = [];
-      if (msg.content) blocks.push({ type: "text", text: msg.content });
-      if (blocks.length > 0) {
-        out.push({ role: roleFor(msg.role), blocks });
-      }
-      continue;
-    }
-    const blocks: ContentBlock[] = [];
-    for (const p of parts) {
-      if (p.type === "text" && p.textContent) blocks.push({ type: "text", text: p.textContent });
-      else if (p.type === "tool_use" && p.toolCallId) {
-        let input: unknown = null;
-        try {
-          input = p.inputJson ? JSON.parse(p.inputJson) : null;
-        } catch {
-          input = null;
-        }
-        blocks.push({
-          type: "tool_use",
-          id: p.toolCallId,
-          name: p.toolName ?? "unknown",
-          input: input ?? {}
-        });
-      } else if (p.type === "tool_result" && p.toolCallId) {
-        let output: ContentBlock | null = null;
-        try {
-          output = p.outputJson ? (JSON.parse(p.outputJson) as ContentBlock) : null;
-        } catch {
-          output = null;
-        }
-        const payload =
-          output && (output as ToolResultBlock).output
-            ? (output as ToolResultBlock).output
-            : { kind: "text" as const, text: p.outputPreview ?? "" };
-        blocks.push({
-          type: "tool_result",
-          toolUseId: p.toolCallId,
-          output: payload,
-          isError: p.isError
-        });
-      }
-    }
-    if (blocks.length > 0) {
-      out.push({ role: roleFor(msg.role), blocks });
-    }
-  }
-  return out;
-}
-
-function roleFor(role: string): "system" | "user" | "assistant" {
-  return role === "assistant" ? "assistant" : role === "system" ? "system" : "user";
 }
 
 function recordToolResultsAsUserMessage(

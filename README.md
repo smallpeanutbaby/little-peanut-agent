@@ -2,7 +2,7 @@
 
 **面向本地项目工作的桌面 AI Agent 工作台。**
 
-一个本地优先的 Electron 应用，把多模型对话、Agent 执行、Plan 规划、Pipeline 编排、权限审批、MCP 扩展和 SQLite 持久化放进同一套桌面工作流里。
+一个本地优先的 Electron 应用，把多模型对话、Agent 执行、Plan 规划、Review 审查、Pipeline 编排、权限审批、MCP 扩展和 SQLite 持久化放进同一套桌面工作流里。
 
 [English](./README.en.md) · [架构文档](./docs/architecture.md) · `Node.js 22+` · `Electron` · `React` · `SQLite`
 
@@ -120,21 +120,35 @@ Little Peanut 目前更接近下面这种使用方式：
 - 已有前端配置界面
 - 主进程已有 pipeline loop 和完成报告结构
 
-### 5. 权限审批与风险门禁
+### 5. Review 审查模式
+
+- 支持面向项目的 `review` 模式，用于只读代码审查而不是直接改文件
+- 可以围绕提交、分支差异或指定范围生成审查上下文
+- 审查结果按摘要、阻断问题、主要建议和次要建议分层输出
+- 前端已提供 review scope 选择与启动入口
+
+### 6. 权限审批与风险门禁
 
 - 工具执行会经过统一权限网关
 - Bash 命令有风险分类
 - 破坏性操作会升级审批
 - 支持会话级、项目级权限规则持久化
 - 支持免审开关，但默认仍是显式审批路径
+- 文件读写、删除、MemoryRead 等工具会结合项目路径校验与建议提示，减少越界和误路径操作
 
-### 6. MCP 与扩展能力
+### 7. 上下文预算与历史压缩
+
+- Agent 运行时会根据模型上下文窗口自动做 budget 约束
+- 会在发送前压缩历史、裁剪超大工具结果，并向前端回传上下文预算快照
+- 前端已支持展示预算占用、压缩状态和运行中的上下文变化
+
+### 8. MCP 与扩展能力
 
 - 已有 MCP 服务器配置、测试、启停和连接入口
 - 支持 `stdio`、`SSE`、`HTTP` 类型连接
 - 为后续技能、工具生态和外部能力接入留了扩展位
 
-### 7. 本地持久化
+### 9. 本地持久化
 
 - SQLite 持久化已经覆盖会话、消息、工具运行、任务、权限、记忆索引、成本日志等核心数据
 - Schema 通过 migration 维护，后续演进有明确约束
@@ -150,6 +164,7 @@ Little Peanut 目前更接近下面这种使用方式：
 | `agent` | 面向项目执行任务，偏行动型 |
 | `plan` | 只读调研和方案输出，不直接改文件 |
 | `pipeline` | 多阶段多角色编排 |
+| `review` | 只读代码审查，围绕 diff / commits / branches 输出审查结论 |
 | `writing` | 文案、润色、翻译、写作辅助 |
 | `code` | 编程、排障、代码审阅 |
 | `learning` | 解释概念、教学式回答 |
@@ -287,7 +302,14 @@ npm --prefix src run rebuild:native
 | `npm run pack` | 生成本地打包目录 |
 | `npm run dist` | 打正式安装包 |
 | `npm run dist:mac` | 构建 macOS 安装包 |
-| `npm run dist:win` | 构建 Windows 安装包 |
+| `npm run dist:win` | 构建 Windows NSIS 安装包 |
+
+## 打包说明
+
+- Windows 当前默认只产出 **NSIS 安装版**，不再同时生成 portable 免安装版，避免同名覆盖
+- Windows 图标资源位于 `src/resources/icon.ico` 与 `src/resources/icon.png`
+- 小花生图标可通过 `src/__scripts__/generate-peanut-icon.ps1` 重新生成
+- 当前 Windows 打包配置里 `signAndEditExecutable` 为关闭状态，用于规避部分机器上 `winCodeSign` 解压符号链接权限问题；这不影响生成安装程序
 
 ## 项目结构
 

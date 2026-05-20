@@ -34,13 +34,16 @@ export interface SystemPromptOptions {
   memoryHints?: Array<{ path: string; type: string | null; description: string | null }>;
   /** Registered skills the model can opt in to via the `Skill` tool. */
   skillHints?: Array<{ name: string; source: "project" | "user"; description: string }>;
+  /** Shallow project tree (top 1-2 levels) to reduce path guessing. */
+  projectLayout?: string[];
 }
 
 const TOOL_USAGE_PROMPT = [
   "## Tool usage",
   "",
-  "- Prefer the smallest tool that gets the job done. Read before Edit/Write. Glob before Read when the path is unknown.",
-  "- Do NOT speculate about file paths — verify with Glob or ListDir first.",
+  "- **Never guess file paths.** If the exact path is unknown, call Glob or Grep first, then Read.",
+  "- Prefer the smallest tool that gets the job done. Read before Edit/Write.",
+  "- When Read returns `file does not exist`, follow the suggested Glob/Grep commands in the error — do NOT invent another path.",
   "- Bash commands go through a risk classifier and may require user approval. Avoid `sudo`, `rm -rf`, `curl | sh`, redirects to raw block devices, and other destructive patterns.",
   "- When proposing edits, include enough surrounding context in `old_string` for a unique match.",
   "- After making changes, summarise what changed in one or two sentences.",
@@ -76,6 +79,16 @@ function buildEnvironmentSegment(opts: SystemPromptOptions): string {
 
   if (opts.projectContext) {
     lines.push("", "## Project context (from .agent/PROJECT.md)", opts.projectContext.trim());
+  }
+  if (opts.projectLayout && opts.projectLayout.length > 0) {
+    lines.push(
+      "",
+      "## Project layout (partial — use Glob/Grep for deeper paths)",
+      "Top-level folders/files under the project root. Do NOT shorten these names when constructing paths."
+    );
+    for (const entry of opts.projectLayout) {
+      lines.push(`- \`${entry}\``);
+    }
   }
   if (opts.recentFiles && opts.recentFiles.length > 0) {
     lines.push("", "## Recently edited files");

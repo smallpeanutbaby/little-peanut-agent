@@ -64,6 +64,7 @@ void i18n
               clarifyHint: "点击选项可填入输入框，或发送「直接出方案」跳过确认"
             },
             pipeline:   { name: "流水线", desc: "多模型协作：制定计划→执行工作→审查结果，三阶段自动流转" },
+            review:     { name: "审查", desc: "针对 Git 未提交变更或指定提交做代码审查；无 Git 时可手动描述审查范围" },
             writing:    { name: "写作",   desc: "起草、润色、改写、翻译，文笔流畅" },
             code:       { name: "代码",   desc: "编程、调试、代码审查，工程师视角" },
             learning:   { name: "学习",   desc: "概念讲解、知识科普，分步骤+举例" },
@@ -81,6 +82,53 @@ void i18n
             hint: "制定计划 → 执行工作 → 审查结果",
             bypassOn: "免审模式开启：所有工具自动批准",
             bypassOff: "免审模式关闭：工具需手动审批"
+          },
+          review: {
+            banner: {
+              notConfigured: "尚未配置审查范围",
+              configure: "配置审查范围",
+              reconfigure: "重新配置"
+            },
+            scope: {
+              uncommitted: "未提交变更（{{count}} 个文件）",
+              commits: "{{branch}} · {{count}} 个提交"
+            },
+            setup: {
+              title: "配置审查范围",
+              loading: "正在检测 Git…",
+              chooseHint: "选择要审查的代码范围：",
+              uncommittedTitle: "未提交审查",
+              uncommittedDesc: "审查当前工作区已暂存 + 未暂存的变更",
+              uncommittedMeta: "{{count}} 个文件有变更",
+              commitsTitle: "分支提交审查",
+              commitsDesc: "选择分支，再勾选要审查的提交",
+              currentBranch: "当前分支：{{branch}}",
+              uncommittedPreview: "将审查以下文件的 diff：",
+              branchLabel: "分支",
+              commitsHint: "勾选一个或多个提交（可多选）",
+              loadingCommits: "加载提交列表…",
+              noCommits: "该分支暂无提交记录",
+              noGitHint: "当前项目不是 Git 仓库，请手动描述需要审查的内容。",
+              manualLabel: "需要审查什么？",
+              manualPlaceholder: "例如：审查 src/auth 目录的登录逻辑；或粘贴 PR 描述、文件路径、关注点…",
+              manualLink: "手动输入审查范围",
+              noChanges: "工作区没有可审查的变更",
+              pickCommit: "请至少选择一个提交",
+              manualRequired: "请描述需要审查的内容",
+              errorCommits: "无法加载提交列表",
+              errorBranches: "无法读取 Git 分支，请确认项目路径是仓库根目录且已安装 Git",
+              retry: "重试",
+              required: "审查模式需要先配置审查范围",
+              back: "返回",
+              cancel: "取消",
+              confirm: "开始审查",
+              launching: "正在启动审查…",
+              launchFailed: "无法启动审查，请检查 API Key 与网络后重试",
+              launchNoProject: "该会话未关联项目，无法审查",
+              alreadyRunning: "当前会话仍在生成中，请稍候或先停止",
+              followUpHint: "审查已启动。若要追问请直接输入文字；若要重新审查整段 diff，请点上方「重新配置」"
+            },
+            preparing: "正在获取代码变更并启动审查…"
           },
           home: {
             pageTitle: "对话",
@@ -491,6 +539,7 @@ void i18n
               clarifyHint: "Reply with your choices below, or send \"直接出方案\" to skip clarification"
             },
             pipeline:   { name: "Pipeline",  desc: "Multi-model collaboration: plan → execute → review in three automated stages" },
+            review:     { name: "Review",    desc: "Review uncommitted Git changes or selected commits; describe scope manually without Git" },
             writing:    { name: "Writing",    desc: "Draft, polish, rewrite, translate" },
             code:       { name: "Code",       desc: "Programming, debugging, code review" },
             learning:   { name: "Learning",   desc: "Concept explanations, step-by-step + examples" },
@@ -508,6 +557,53 @@ void i18n
             hint: "Plan → Execute → Review",
             bypassOn: "Bypass mode on: all tools auto-approved",
             bypassOff: "Bypass mode off: tools need manual approval"
+          },
+          review: {
+            banner: {
+              notConfigured: "Review scope not configured",
+              configure: "Configure scope",
+              reconfigure: "Reconfigure"
+            },
+            scope: {
+              uncommitted: "Uncommitted changes ({{count}} files)",
+              commits: "{{branch}} · {{count}} commit(s)"
+            },
+            setup: {
+              title: "Configure review scope",
+              loading: "Detecting Git…",
+              chooseHint: "Choose what to review:",
+              uncommittedTitle: "Uncommitted review",
+              uncommittedDesc: "Review staged + unstaged working tree changes",
+              uncommittedMeta: "{{count}} changed file(s)",
+              commitsTitle: "Branch commits",
+              commitsDesc: "Pick a branch, then select commit(s) to review",
+              currentBranch: "Current branch: {{branch}}",
+              uncommittedPreview: "Diff will include:",
+              branchLabel: "Branch",
+              commitsHint: "Select one or more commits",
+              loadingCommits: "Loading commits…",
+              noCommits: "No commits on this branch",
+              noGitHint: "This project is not a Git repo — describe what to review manually.",
+              manualLabel: "What should be reviewed?",
+              manualPlaceholder: "e.g. Review login flow under src/auth; or paste PR description, paths, concerns…",
+              manualLink: "Enter scope manually",
+              noChanges: "No changes to review",
+              pickCommit: "Select at least one commit",
+              manualRequired: "Describe what to review",
+              errorCommits: "Failed to load commits",
+              errorBranches: "Could not read Git branches — ensure the project path is the repo root and Git is installed",
+              retry: "Retry",
+              required: "Review mode requires a configured scope",
+              back: "Back",
+              cancel: "Cancel",
+              confirm: "Start review",
+              launching: "Starting review…",
+              launchFailed: "Could not start review — check API key and network",
+              launchNoProject: "This conversation has no project for review",
+              alreadyRunning: "A run is already in progress for this conversation",
+              followUpHint: "Review already started. Type a message to ask a follow-up, or use Reconfigure to run a new review."
+            },
+            preparing: "Fetching changes and starting review…"
           },
           home: {
             pageTitle: "New Chat",

@@ -31,6 +31,7 @@
   "build": {
     "appId": "com.littlepeanut.app",
     "productName": "Little Peanut",
+    "icon": "resources/icon.png",
     "asar": true,
     "directories": {
       "output": "release/${version}",
@@ -41,7 +42,12 @@
       "dist/**/*",
       "package.json"
     ],
-    "extraResources": [],
+    "extraResources": [
+      {
+        "from": "resources/icon.png",
+        "to": "icon.png"
+      }
+    ],
     "mac": {
       "target": [
         {
@@ -65,15 +71,11 @@
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "win": {
+      "signAndEditExecutable": false,
+      "icon": "resources/icon.ico",
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        },
-        {
-          "target": "portable",
           "arch": [
             "x64"
           ]

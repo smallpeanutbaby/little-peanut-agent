@@ -68,7 +68,8 @@ export function PlanResearchGroup({
                 part={p}
                 liveStatus={run?.status}
                 resultPart={result}
-                variant="plan-compact"
+                nested
+                defaultExpanded={false}
               />
             );
           })}

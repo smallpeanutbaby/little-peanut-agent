@@ -23,6 +23,7 @@ import fs from "node:fs/promises";
 import { z } from "zod";
 import { buildTool, blockFromText, type Tool, type ToolResult } from "../Tool.js";
 import { classifyBashRisk } from "../../permissions/bashRisk.js";
+import { resolveShellExecutable } from "../resolveShell.js";
 
 const inputSchema = z.object({
   command: z
@@ -73,7 +74,7 @@ export const BashTool: Tool<typeof inputSchema, Output> = buildTool({
   prompt: () =>
     [
       "Run a shell command in the project root.",
-      "Default cwd is the active project; default shell is bash -lc (macOS/Linux) or pwsh -c (Windows).",
+      "Default cwd is the active project; default shell is bash -lc (macOS/Linux) or PowerShell/cmd on Windows.",
       "Output is streamed; up to 100 KB is captured for the model. Longer logs spill to a file you can ask the user to inspect.",
       "Every command goes through a risk classifier. Avoid `sudo`, `rm -rf /`, `curl … | sh`, redirects to raw block devices."
     ].join("\n"),
@@ -91,13 +92,7 @@ export const BashTool: Tool<typeof inputSchema, Output> = buildTool({
       return { ok: false, errorCode: "aborted", errorMessage: "aborted" };
     }
     const timeoutMs = input.timeout_ms ?? DEFAULT_TIMEOUT_MS;
-    const isWin = process.platform === "win32";
-    // Use an absolute path for the POSIX shell so we don't depend on the
-    // electron-spawned process inheriting a usable PATH. macOS/Linux ship
-    // bash at /bin/bash; if a user's distro really lacks it they can
-    // symlink. On Windows we still rely on PATH for `pwsh`.
-    const shell = isWin ? "pwsh" : "/bin/bash";
-    const shellArgs = isWin ? ["-NoLogo", "-Command"] : ["-lc"];
+    const { shell, shellArgs, label: shellLabel } = resolveShellExecutable();
     const cwd = ctx.projectRoot;
 
     // Validate cwd up-front. Without this check, spawn fails inside Node's
@@ -226,7 +221,12 @@ export const BashTool: Tool<typeof inputSchema, Output> = buildTool({
     }
 
     if (spawnError) {
-      return { ok: false, errorCode: "spawn_failed", errorMessage: (spawnError as Error).message };
+      const err = spawnError as Error;
+      const hint =
+        process.platform === "win32"
+          ? `无法启动 Shell（${shellLabel}，${shell}）：${err.message}。请确认已安装 PowerShell，或重启应用后再试。`
+          : `无法启动 Shell（${shell}）：${err.message}`;
+      return { ok: false, errorCode: "spawn_failed", errorMessage: hint };
     }
 
     let logPath: string | null = null;

@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { envWithGitPath, resolveGitExecutable } from "./resolveGit.js";
 import { access, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { GitFileChange, GitFileStatus, GitStatusResult } from "@shared/types.js";
@@ -44,10 +45,11 @@ export async function getGitStatus(projectPath: string): Promise<GitStatusResult
     (resolve) => {
       let child;
       try {
-        child = spawn("git", args, {
+        child = spawn(resolveGitExecutable(), args, {
           cwd: projectPath,
-          env: process.env,
-          windowsHide: true
+          env: envWithGitPath(),
+          windowsHide: true,
+          shell: false
         });
       } catch (err) {
         resolve({ code: null, stdout: "", stderr: "", spawnError: err as Error });

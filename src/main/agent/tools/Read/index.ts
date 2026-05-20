@@ -17,7 +17,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { buildTool, blockFromText, type ToolResult, type Tool } from "../Tool.js";
-import { validateProjectPath } from "../../permissions/pathValidation.js";
+import { validatePathForTool } from "../../permissions/validatePathForTool.js";
 
 // Many models (DeepSeek, Qwen, Kimi, …) have strong muscle memory for the
 // Claude-Code-style `file_path` field name and will use it instead of `path`
@@ -84,6 +84,7 @@ export const ReadTool: Tool<typeof inputSchema, Output> = buildTool({
   prompt: () =>
     [
       "Reads a file from the local filesystem.",
+      "IMPORTANT: If you do not know the exact path, call Glob or Grep FIRST — never guess folder names.",
       "Always quote returned line numbers verbatim when proposing edits — they pair with the Edit tool's `old_string` argument.",
       "Pass `offset` and `limit` to paginate; do not assume the model knows the file's length.",
       "Returns at most 2000 lines per call by default. Binary files return an error."
@@ -92,7 +93,7 @@ export const ReadTool: Tool<typeof inputSchema, Output> = buildTool({
     if (ctx.signal.aborted) {
       return { ok: false, errorCode: "aborted", errorMessage: "aborted" };
     }
-    const guard = await validateProjectPath(input.path, ctx.projectRoot, {
+    const guard = await validatePathForTool(input.path, ctx.projectRoot, {
       mustExist: true,
       additionalWorkingDirectories: ctx.additionalWorkingDirectories
     });

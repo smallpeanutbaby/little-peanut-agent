@@ -17,7 +17,7 @@ import path from "node:path";
 import { z } from "zod";
 import { buildTool, blockFromText, type Tool, type ToolResult } from "../Tool.js";
 import { memoryDirFor, parseMemoryFile, type MemoryFrontmatter } from "../../memory/paths.js";
-import { validateProjectPath } from "../../permissions/pathValidation.js";
+import { validatePathForTool } from "../../permissions/validatePathForTool.js";
 
 const inputSchema = z.object({
   path: z
@@ -55,7 +55,7 @@ export const MemoryReadTool: Tool<typeof inputSchema, Output> = buildTool({
     }
     const memDir = memoryDirFor(ctx.projectRoot);
     const abs = path.isAbsolute(input.path) ? input.path : path.join(memDir, input.path);
-    const guard = await validateProjectPath(abs, ctx.projectRoot, {
+    const guard = await validatePathForTool(abs, ctx.projectRoot, {
       mustExist: true,
       additionalWorkingDirectories: ctx.additionalWorkingDirectories
     });

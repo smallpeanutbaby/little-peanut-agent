@@ -6,6 +6,9 @@ import { cancelAllStreamsForWindow, registerIpc } from "./ipc/index.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const appIconPath = app.isPackaged
+  ? path.join(process.resourcesPath, "icon.png")
+  : path.join(__dirname, "../../resources/icon.png");
 
 // Process-wide error handlers — without these, an async failure in the main
 // process (e.g. a native module ABI mismatch when opening better-sqlite3) is
@@ -29,6 +32,7 @@ function createWindow() {
     minHeight: 760,
     title: "Little Peanut",
     backgroundColor: "#0a0a0a",
+    icon: process.platform === "win32" || process.platform === "linux" ? appIconPath : undefined,
     titleBarStyle: "hidden",
     titleBarOverlay: process.platform !== "darwin" ? { color: "#0a0a0a", symbolColor: "#cccccc", height: 36 } : undefined,
     autoHideMenuBar: process.platform === "win32",

@@ -115,13 +115,19 @@ function previewToolResult(block: ToolResultBlock): string {
  */
 export function autocompact(
   messages: CanonicalMessage[],
-  budget: number
+  budget: number,
+  opts?: { keepRecent?: number; force?: boolean }
 ): { messages: CanonicalMessage[]; metrics: CompactionMetrics } {
+  const keepRecent = opts?.keepRecent ?? KEEP_RECENT_MESSAGES;
   const before = tokensForHistory(messages);
-  if (before <= budget * COMPACT_THRESHOLD || messages.length <= KEEP_RECENT_MESSAGES + 2) {
+  const shouldCompact =
+    opts?.force === true
+      ? messages.length > keepRecent + 1
+      : before > budget * COMPACT_THRESHOLD && messages.length > keepRecent + 2;
+  if (!shouldCompact) {
     return { messages, metrics: { before, after: before, strategy: "noop" } };
   }
-  const keepFrom = messages.length - KEEP_RECENT_MESSAGES;
+  const keepFrom = messages.length - keepRecent;
   const old = messages.slice(0, keepFrom);
   const recent = messages.slice(keepFrom);
   const summary = summariseOlder(old);
@@ -231,6 +237,108 @@ export function applyPtlFallback(
       after,
       strategy: "ptl",
       notes: "dropped tool_result bodies"
+    }
+  };
+}
+
+/**
+ * Shrink every oversize tool_result in the history (not just the last
+ * user message). Returns a new array — on-disk transcript unchanged.
+ */
+export function microcompactAllToolResults(
+  messages: CanonicalMessage[]
+): { messages: CanonicalMessage[]; metrics: CompactionMetrics } {
+  const before = tokensForHistory(messages);
+  let shrunk = 0;
+  const newMessages = messages.map((msg) => ({
+    ...msg,
+    blocks: msg.blocks.map((block) => {
+      if (block.type !== "tool_result") return block;
+      const size = tokensForBlock(block);
+      if (size <= MICRO_BLOCK_THRESHOLD) return block;
+      shrunk += 1;
+      return shrinkToolResult(block);
+    })
+  }));
+  const after = tokensForHistory(newMessages);
+  return {
+    messages: newMessages,
+    metrics: {
+      before,
+      after,
+      strategy: shrunk > 0 ? "microcompact" : "noop",
+      notes: shrunk > 0 ? `${shrunk} tool_result block(s) summarised` : undefined
+    }
+  };
+}
+
+/**
+ * Last-resort: drop oldest messages, then shorten remaining text blocks
+ * until the history fits under `hardCap`.
+ */
+export function truncateMessagesToFit(
+  messages: CanonicalMessage[],
+  hardCap: number
+): { messages: CanonicalMessage[]; metrics: CompactionMetrics } {
+  const before = tokensForHistory(messages);
+  if (before <= hardCap) {
+    return { messages, metrics: { before, after: before, strategy: "noop" } };
+  }
+
+  let current = [...messages];
+  while (current.length > 2 && tokensForHistory(current) > hardCap) {
+    current = current.slice(1);
+  }
+
+  if (tokensForHistory(current) > hardCap) {
+    current = current.map((msg) => ({
+      ...msg,
+      blocks: msg.blocks.map((b) => {
+        if (b.type === "text") {
+          return { ...b, text: shorten(b.text, 800) };
+        }
+        if (b.type === "tool_result") {
+          return {
+            type: "tool_result" as const,
+            toolUseId: b.toolUseId,
+            output: {
+              kind: "text" as const,
+              text: `[tool_result ${b.toolUseId} omitted — context limit]`
+            },
+            isError: b.isError
+          };
+        }
+        return b;
+      })
+    }));
+  }
+
+  let after = tokensForHistory(current);
+  if (after > hardCap) {
+    current = [
+      {
+        role: "assistant" as const,
+        blocks: [
+          {
+            type: "text" as const,
+            text:
+              "[Earlier conversation truncated to fit the model context window. " +
+              "Full history remains visible in the UI.]"
+          }
+        ]
+      },
+      ...current.slice(-2)
+    ];
+    after = tokensForHistory(current);
+  }
+
+  return {
+    messages: current,
+    metrics: {
+      before,
+      after,
+      strategy: "ptl",
+      notes: "truncated messages to fit hard cap"
     }
   };
 }

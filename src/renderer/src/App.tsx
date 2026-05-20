@@ -9,6 +9,7 @@ import type {
   ModelConfig,
   Project,
   ProviderConfig,
+  ReviewScope,
   ThinkBudget,
   ThinkProtocol
 } from "@shared/types";
@@ -18,6 +19,22 @@ import { ChatPanel } from "./components/ChatPanel";
 import { ProjectLandingPanel } from "./components/ProjectLandingPanel";
 import { SettingsPage } from "./components/SettingsPage";
 import { CHAT_MODES, CHAT_MODE_MAP, type ChatModeId } from "@shared/modes";
+import { usePersistedState } from "./hooks/usePersistedState";
+import { backgroundClassMap, textClassMap } from "./constants/theme-tokens";
+import { AI_PROVIDERS_DEFAULT, type CustomProvider, type ProviderModel } from "./constants/providers";
+import { PROTOCOL_LEVELS, THINK_BUDGET_LABELS } from "./constants/think-presets";
+import { ThemeModal } from "./components/modals/ThemeModal";
+import { PermissionApprovalModal, type PermissionRequest, type PermissionDecisionKind } from "./components/modals/PermissionApprovalModal";
+import { RunningTasksTray } from "./components/RunningTasksTray";
+import { ResumeToast } from "./components/ResumeToast";
+import { ThinkConfigModal } from "./components/modals/ThinkConfigModal";
+import { AddModelModal } from "./components/modals/AddModelModal";
+import { AddProviderModal } from "./components/modals/AddProviderModal";
+import { ReviewSetupModal } from "./components/modals/ReviewSetupModal";
+import { formatUserFacingError, sanitizeDisplayText } from "./utils/displayText";
+import { CapabilityChips } from "./components/CapabilityChips";
+import { PipelineConfigurator } from "./components/PipelineConfigurator";
+import type { PipelineStageConfig } from "@shared/types";
 
 /**
  * Mode whitelists per context.
@@ -29,23 +46,25 @@ import { CHAT_MODES, CHAT_MODE_MAP, type ChatModeId } from "@shared/modes";
  *   project-flavoured modes can be added here.
  */
 const STANDALONE_CHAT_MODE_IDS = CHAT_MODES
-  .filter((m) => m.id !== "agent" && m.id !== "plan" && m.id !== "pipeline")
+  .filter((m) => m.id !== "agent" && m.id !== "plan" && m.id !== "pipeline" && m.id !== "review")
   .map((m) => m.id) as readonly ChatModeId[];
-const PROJECT_CHAT_MODE_IDS = ["agent", "plan", "pipeline"] as const satisfies readonly ChatModeId[];
-import { usePersistedState } from "./hooks/usePersistedState";
-import { backgroundClassMap, textClassMap } from "./constants/theme-tokens";
-import { AI_PROVIDERS_DEFAULT, type CustomProvider, type ProviderModel } from "./constants/providers";
-import { PROTOCOL_LEVELS, THINK_BUDGET_LABELS } from "./constants/think-presets";
-import { ThemeModal } from "./components/modals/ThemeModal";
-import { PermissionApprovalModal, type PermissionRequest, type PermissionDecisionKind } from "./components/modals/PermissionApprovalModal";
-import { RunningTasksTray } from "./components/RunningTasksTray";
-import { ResumeToast } from "./components/ResumeToast";
-import { AddProviderModal } from "./components/modals/AddProviderModal";
-import { ThinkConfigModal } from "./components/modals/ThinkConfigModal";
-import { AddModelModal } from "./components/modals/AddModelModal";
-import { CapabilityChips } from "./components/CapabilityChips";
-import { PipelineConfigurator } from "./components/PipelineConfigurator";
-import type { PipelineStageConfig } from "@shared/types";
+const PROJECT_CHAT_MODE_IDS = ["agent", "plan", "pipeline", "review"] as const satisfies readonly ChatModeId[];
+
+/** Per-conversation mode — never leak project-only modes (review, etc.) into standalone chat. */
+function conversationModeId(
+  conv: Conversation | null | undefined,
+  standaloneFallback: ChatModeId
+): ChatModeId {
+  if (!conv) return standaloneFallback;
+  const stored = conv.modeId as ChatModeId | undefined;
+  if (conv.projectId) {
+    return stored ?? "agent";
+  }
+  if (stored && (STANDALONE_CHAT_MODE_IDS as readonly string[]).includes(stored)) {
+    return stored;
+  }
+  return "chat";
+}
 
 /**
  * True if the model exposes any form of reasoning/thinking. v4 derives this
@@ -1245,6 +1264,12 @@ export function App() {
       { role: "reviewer", providerId: AI_PROVIDERS_DEFAULT[0]?.id ?? "", modelId: AI_PROVIDERS_DEFAULT[0]?.models[0]?.id ?? "" }
     ]
   );
+  const [reviewScopes, setReviewScopes] = usePersistedState<Record<string, ReviewScope>>("reviewScopes.v1", {});
+  const [reviewModal, setReviewModal] = useState<{
+    conversationId: string;
+    projectPath: string;
+    projectName: string;
+  } | null>(null);
   const [activeConversation, setActiveConversation] = useState<Conversation | null>(null);
   const [providerCache, setProviderCache] = useState<Record<string, ProviderConfig>>({});
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -1295,6 +1320,8 @@ export function App() {
     pipelineStage?: { stage: "planner" | "executor" | "reviewer"; model: string } | null;
   };
   const [activeStreams, setActiveStreams] = useState<Record<string, StreamState>>({});
+  /** Bumps when agent run persists messages so ChatPanel reloads history. */
+  const [messagesRefreshTick, setMessagesRefreshTick] = useState(0);
   const activeStreamsRef = useRef(activeStreams);
   activeStreamsRef.current = activeStreams;
 
@@ -1356,6 +1383,38 @@ export function App() {
     setProjects(list);
   }, []);
 
+  const openReviewSetupForConversation = useCallback(
+    (conversationId: string) => {
+      const conv =
+        conversations.find((c) => c.id === conversationId) ??
+        (activeConversation?.id === conversationId ? activeConversation : null);
+      const project = conv?.projectId
+        ? projects.find((p) => p.id === conv.projectId) ?? null
+        : activeProject;
+      if (!project?.path) return;
+      setReviewModal({
+        conversationId,
+        projectPath: project.path,
+        projectName: project.name
+      });
+    },
+    [conversations, activeConversation, projects, activeProject]
+  );
+
+  const handleProjectModeChange = useCallback(
+    (conv: Conversation, id: ChatModeId) => {
+      if (window.electronAPI?.updateConversation) {
+        void window.electronAPI.updateConversation(conv.id, { modeId: id }).then((updated) => {
+          if (updated) setActiveConversation(updated);
+        });
+      }
+      if (id === "review") {
+        openReviewSetupForConversation(conv.id);
+      }
+    },
+    [openReviewSetupForConversation]
+  );
+
   /**
    * Start a chat stream for a conversation. This:
    *   1. appends the user message + assistant placeholder to DB (so they
@@ -1389,6 +1448,7 @@ export function App() {
     thinkEnabled: boolean;
     modeId: string;
     attachments?: ChatAttachment[];
+    reviewScope?: ReviewScope;
     /**
      * When set, this prior assistant message (a failed placeholder or an
      * `⚠️` error marker) is deleted BEFORE we list context and start a
@@ -1415,14 +1475,23 @@ export function App() {
     if (
       (params.modeId === "agent" ||
         params.modeId === "plan" ||
-        params.modeId === "pipeline") &&
+        params.modeId === "pipeline" ||
+        params.modeId === "review") &&
       params.conversation.projectId &&
       api.startAgentRun &&
       api.onAgentRun
     ) {
       const convId = params.conversation.id;
       const userText = params.userText ?? "";
-      if (!userText.trim() && !params.attachments?.length) {
+      const reviewScope =
+        params.modeId === "review"
+          ? params.reviewScope ?? reviewScopes[convId]
+          : undefined;
+      if (params.modeId === "review" && !reviewScope) {
+        openReviewSetupForConversation(convId);
+        return { ok: false, reason: "send-failed", message: "请先配置审查范围" };
+      }
+      if (params.modeId !== "review" && !userText.trim() && !params.attachments?.length) {
         return { ok: false, reason: "send-failed", message: "empty message" };
       }
       const modelDef = AI_PROVIDERS_DEFAULT
@@ -1446,7 +1515,8 @@ export function App() {
           thinkProtocol,
           modeId: params.modeId,
           language: i18n.language === "en" ? "en" : "zh-CN",
-          ...(params.modeId === "pipeline" ? { pipelineStages } : {})
+          ...(params.modeId === "pipeline" ? { pipelineStages } : {}),
+          ...(params.modeId === "review" && reviewScope ? { reviewScope } : {})
         });
       } catch (e) {
         return { ok: false, reason: "send-failed", message: (e as Error).message };
@@ -1506,7 +1576,14 @@ export function App() {
               return { ...prev, [convId]: { ...cur, reasoning: cur.reasoning + e.text } };
             }
             if (e.type === "error") {
-              return { ...prev, [convId]: { ...cur, status: "error", errorMessage: e.message } };
+              return {
+                ...prev,
+                [convId]: {
+                  ...cur,
+                  status: "error",
+                  errorMessage: formatUserFacingError(e.message, "stream_error")
+                }
+              };
             }
           }
           if (ev.kind === "context_compacted") {
@@ -1527,7 +1604,10 @@ export function App() {
               [convId]: {
                 ...cur,
                 status: ev.reason === "completed" ? "done" : "error",
-                errorMessage: ev.reason === "completed" ? undefined : ev.message ?? ev.reason,
+                errorMessage:
+                  ev.reason === "completed"
+                    ? undefined
+                    : formatUserFacingError(ev.message, ev.reason),
                 pipelineStage: null
               }
             };
@@ -1547,6 +1627,14 @@ export function App() {
           }));
         }
         if (ev.kind === "message_persisted") {
+          setMessagesRefreshTick((n) => n + 1);
+          if (ev.role === "assistant" && ev.messageId) {
+            setActiveStreams((prev) => {
+              const cur = prev[convId];
+              if (!cur || cur.assistantMessageId) return prev;
+              return { ...prev, [convId]: { ...cur, assistantMessageId: ev.messageId } };
+            });
+          }
           void refreshConversations();
         }
         if (ev.kind === "terminal") {
@@ -1691,7 +1779,7 @@ export function App() {
       watchdog = setTimeout(() => {
         console.warn(`[chat] renderer watchdog: no events for ${WATCHDOG_MS}ms, conv=${convId}, force-ending`);
         void window.electronAPI?.cancelChatStream?.(started.streamId);
-        finalize(t("chatStream.timeoutAutoStopped"));
+        finalize(formatUserFacingError(t("chatStream.timeoutAutoStopped"), "stream_error"));
       }, WATCHDOG_MS);
     };
     armWatchdog();
@@ -1708,7 +1796,10 @@ export function App() {
           return { ...prev, [convId]: { ...cur, reasoning: cur.reasoning + ev.text } };
         }
         if (ev.type === "error") {
-          return { ...prev, [convId]: { ...cur, status: "error", errorMessage: ev.message } };
+          return {
+            ...prev,
+            [convId]: { ...cur, status: "error", errorMessage: formatUserFacingError(ev.message, "stream_error") }
+          };
         }
         if (ev.type === "done") {
           return { ...prev, [convId]: { ...cur, status: "done" } };
@@ -1733,7 +1824,71 @@ export function App() {
     // Update the sidebar immediately to reflect the new user message + auto-title.
     void refreshConversations();
     return { ok: true };
-  }, [refreshConversations, t]);
+  }, [refreshConversations, reviewScopes, openReviewSetupForConversation, pipelineStages, t]);
+
+  /** Save review scope and immediately start an agent review run (diff → LLM). */
+  const launchReviewAfterScope = useCallback(
+    async (conversationId: string, scope: ReviewScope) => {
+      setReviewScopes((prev) => ({ ...prev, [conversationId]: scope }));
+
+      let conv =
+        conversations.find((c) => c.id === conversationId) ??
+        (activeConversation?.id === conversationId ? activeConversation : null);
+      if (!conv?.projectId) {
+        throw new Error(t("review.setup.launchNoProject"));
+      }
+
+      if (activeStreams[conversationId]?.status === "streaming") {
+        throw new Error(t("review.setup.alreadyRunning"));
+      }
+
+      if (activeConversation?.id !== conv.id) {
+        setActiveConversation(conv);
+      }
+      setActivePage("chat");
+
+      const api = window.electronAPI;
+      if (conv.modeId !== "review" && api?.updateConversation) {
+        const updated = await api.updateConversation(conv.id, { modeId: "review" });
+        if (updated) {
+          conv = updated;
+          setActiveConversation(updated);
+        }
+      }
+
+      const modelDef = AI_PROVIDERS_DEFAULT
+        .find((p) => p.id === (conv.providerId ?? chatProvider))?.models
+        .find((m) => m.id === (conv.modelId ?? chatModel));
+
+      const result = await startChatStream({
+        conversation: conv,
+        userText: "",
+        providerId: conv.providerId ?? chatProvider,
+        modelId: conv.modelId ?? chatModel,
+        thinkBudget: conv.thinkBudget ?? chatThinkBudget,
+        thinkEnabled: conv.thinkEnabled ?? (hasReasoning(modelDef) && chatThinkEnabled),
+        modeId: "review",
+        reviewScope: scope
+      });
+
+      if (!result.ok) {
+        throw new Error(result.message ?? t("review.setup.launchFailed"));
+      }
+    },
+    [
+      conversations,
+      activeConversation,
+      activeStreams,
+      chatProvider,
+      chatModel,
+      chatThinkBudget,
+      chatThinkEnabled,
+      startChatStream,
+      setActivePage,
+      setActiveConversation,
+      t
+    ]
+  );
 
   const cancelChatStream = useCallback((conversationId: string) => {
     const cur = activeStreamsRef.current[conversationId];
@@ -1844,7 +1999,11 @@ export function App() {
       .find((p) => p.id === chatProvider)?.models
       .find((m) => m.id === chatModel);
     const seedThinkEnabled = hasReasoning(modelDef) && chatThinkEnabled;
-    const seedModeId: ChatModeId = projectId ? "agent" : chatModeId;
+    const seedModeId: ChatModeId = projectId
+      ? "agent"
+      : (STANDALONE_CHAT_MODE_IDS as readonly string[]).includes(chatModeId)
+        ? chatModeId
+        : "chat";
     const conv = await api.createConversation({
       projectId,
       name: t("sidebar.newConversation"),
@@ -2024,19 +2183,20 @@ export function App() {
       modelId: chatModel,
       thinkBudget: chatThinkBudget,
       thinkEnabled: seedThinkEnabled,
-      modeId: chatModeId
+      modeId: (STANDALONE_CHAT_MODE_IDS as readonly string[]).includes(chatModeId) ? chatModeId : "chat"
     });
     setActiveConversation(conv);
     void refreshConversations();
     return conv;
   }, [activeConversation, chatProvider, chatModel, chatThinkBudget, chatThinkEnabled, chatModeId, refreshConversations]);
 
-  // When the user opens a saved conversation, restore its mode in the UI selector.
+  // Sync the standalone mode picker only for non-project conversations.
+  // Project modes (review, plan, …) must NOT pollute `chat.modeId` globally.
   useEffect(() => {
-    if (activeConversation && activeConversation.modeId) {
-      setChatModeId(activeConversation.modeId as ChatModeId);
-    }
-  }, [activeConversation, setChatModeId]);
+    if (!activeConversation || activeConversation.projectId) return;
+    const mid = conversationModeId(activeConversation, "chat");
+    if (chatModeId !== mid) setChatModeId(mid);
+  }, [activeConversation?.id, activeConversation?.modeId, activeConversation?.projectId, chatModeId, setChatModeId]);
 
   /**
    * Context-budget snapshot on conversation load.
@@ -2202,6 +2362,24 @@ export function App() {
       ["--lp-soft-text" as string]: selectedText.soft
     };
   }, [background, text]);
+
+  /** Reflect the active conversation mode in the header (not a generic "对话"). */
+  const mainHeaderTitle = useMemo(() => {
+    if (activePage === "modelConfig") return t("sidebar.modelConfig");
+    if (activePage === "project" && activeProject) return activeProject.name;
+    const conv = activeConversation;
+    if (conv) {
+      const modeId = conversationModeId(conv, chatModeId);
+      const mode = CHAT_MODE_MAP[modeId] ?? CHAT_MODE_MAP.chat;
+      const modeLabel = t(mode.nameKey);
+      if (conv.projectId) {
+        const proj = projects.find((p) => p.id === conv.projectId);
+        if (proj) return `${proj.name} · ${modeLabel}`;
+      }
+      if (modeId !== "chat") return modeLabel;
+    }
+    return t("home.pageTitle");
+  }, [activePage, activeProject, activeConversation, projects, chatModeId, t]);
 
   function saveAppearance(next: AppearanceSettings) {
     // Apply all four UI states in one synchronous block so React batches them
@@ -2621,11 +2799,7 @@ export function App() {
             style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
           >
             <div className="text-[14px] font-medium text-[var(--lp-text)]/86">
-              {activePage === "chat"
-                ? t("home.pageTitle")
-                : activePage === "project"
-                  ? (activeProject?.name ?? t("sidebar.projects"))
-                  : t("sidebar.modelConfig")}
+              {mainHeaderTitle}
             </div>
             {/* Reserved for future header actions */}
           </header>
@@ -2635,6 +2809,21 @@ export function App() {
               conversation={activeConversation}
               onEnsureConversation={ensureConversation}
               onConversationsChanged={() => { void refreshConversations(); }}
+              messagesRefreshSignal={messagesRefreshTick}
+              reviewScope={
+                activeConversation &&
+                activeConversation.projectId &&
+                conversationModeId(activeConversation, chatModeId) === "review"
+                  ? reviewScopes[activeConversation.id]
+                  : undefined
+              }
+              onConfigureReview={
+                activeConversation &&
+                activeConversation.projectId &&
+                conversationModeId(activeConversation, chatModeId) === "review"
+                  ? () => openReviewSetupForConversation(activeConversation.id)
+                  : undefined
+              }
               defaultProviderId={chatProvider}
               defaultModelId={chatModel}
               attachImagesAllowed={(() => {
@@ -2649,11 +2838,7 @@ export function App() {
               })()}
               defaultThinkBudget={chatThinkBudget}
               defaultThinkEnabled={chatThinkEnabled}
-              activeModeId={
-                activeConversation?.projectId
-                  ? ((activeConversation.modeId as string) ?? "agent")
-                  : chatModeId
-              }
+              activeModeId={conversationModeId(activeConversation, chatModeId)}
               liveStream={(() => {
                 if (!activeConversation) return undefined;
                 const s = activeStreams[activeConversation.id];
@@ -2686,7 +2871,7 @@ export function App() {
               toolbar={
                 <>
                   <ModeSelector
-                    selectedModeId={activeConversation?.projectId ? ((activeConversation.modeId as ChatModeId) ?? "agent") : chatModeId}
+                    selectedModeId={conversationModeId(activeConversation, chatModeId)}
                     availableModeIds={
                       activeConversation?.projectId
                         ? PROJECT_CHAT_MODE_IDS
@@ -2695,11 +2880,7 @@ export function App() {
                     onChange={(id) => {
                       const conv = activeConversation;
                       if (conv?.projectId) {
-                        if (conv && window.electronAPI?.updateConversation) {
-                          void window.electronAPI.updateConversation(conv.id, { modeId: id }).then((updated) => {
-                            if (updated) setActiveConversation(updated);
-                          });
-                        }
+                        handleProjectModeChange(conv, id);
                         return;
                       }
                       setChatModeId(id);
@@ -2818,6 +2999,7 @@ export function App() {
                         void window.electronAPI.updateConversation(conv.id, { modeId: id }).then((updated) => {
                           if (updated) setProjectDraftConversation(updated);
                         });
+                        if (id === "review") openReviewSetupForConversation(conv.id);
                       }
                     }}
                   />
@@ -2939,7 +3121,16 @@ export function App() {
                 const e = ev.event;
                 if (e.type === "text_delta") return { ...prev, [convId]: { ...cur, text: cur.text + e.text } };
                 if (e.type === "reasoning_delta") return { ...prev, [convId]: { ...cur, reasoning: cur.reasoning + e.text } };
-                if (e.type === "error") return { ...prev, [convId]: { ...cur, status: "error", errorMessage: e.message } };
+                if (e.type === "error") {
+                  return {
+                    ...prev,
+                    [convId]: {
+                  ...cur,
+                  status: "error",
+                  errorMessage: formatUserFacingError(e.message, "stream_error")
+                }
+                  };
+                }
               }
               if (ev.kind === "context_compacted") {
                 return { ...prev, [convId]: { ...cur, compaction: { before: ev.before, after: ev.after, notes: ev.notes } } };
@@ -2954,7 +3145,18 @@ export function App() {
                 return { ...prev, [convId]: { ...cur, pipelineStage: null } };
               }
               if (ev.kind === "terminal") {
-                return { ...prev, [convId]: { ...cur, status: ev.reason === "completed" ? "done" : "error", errorMessage: ev.reason === "completed" ? undefined : ev.message ?? ev.reason, pipelineStage: null } };
+                return {
+                  ...prev,
+                  [convId]: {
+                    ...cur,
+                    status: ev.reason === "completed" ? "done" : "error",
+                    errorMessage:
+                      ev.reason === "completed"
+                        ? undefined
+                        : sanitizeDisplayText(String(ev.message ?? ev.reason ?? "")),
+                    pipelineStage: null
+                  }
+                };
               }
               return prev;
             });
@@ -2970,7 +3172,17 @@ export function App() {
                 [convId]: { ...prev[convId], usedTokens: ev.usedTokens, budgetTokens: ev.budgetTokens, windowTokens: ev.windowTokens, compacted: ev.compacted, compaction: prev[convId]?.compaction }
               }));
             }
-            if (ev.kind === "message_persisted") void refreshConversations();
+            if (ev.kind === "message_persisted") {
+              setMessagesRefreshTick((n) => n + 1);
+              if (ev.role === "assistant" && ev.messageId) {
+                setActiveStreams((prev) => {
+                  const cur = prev[convId];
+                  if (!cur || cur.assistantMessageId) return prev;
+                  return { ...prev, [convId]: { ...cur, assistantMessageId: ev.messageId } };
+                });
+              }
+              void refreshConversations();
+            }
             if (ev.kind === "terminal") {
               const dispose = streamUnsubsRef.current[convId];
               if (dispose) { dispose(); delete streamUnsubsRef.current[convId]; }
@@ -2980,6 +3192,15 @@ export function App() {
           streamUnsubsRef.current[convId] = unsubscribe;
         }}
       />
+      {reviewModal ? (
+        <ReviewSetupModal
+          projectPath={reviewModal.projectPath}
+          projectName={reviewModal.projectName}
+          initialScope={reviewScopes[reviewModal.conversationId]}
+          onConfirm={(scope) => launchReviewAfterScope(reviewModal.conversationId, scope)}
+          onClose={() => setReviewModal(null)}
+        />
+      ) : null}
     </div>
   );
 }

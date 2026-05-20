@@ -1,140 +1,194 @@
 /**
- * Tool-call cards for agent message bubbles — Cursor-inspired style.
+ * Tool-call UI for agent messages — Cursor-style compact rows.
  *
- * `ToolUseCard` — shows tool name, key params, status, and inline
- * result preview (auto-expanded for the most recent tool call).
- *
- * `ToolResultCard` — standalone result block for tool_result parts
- * that arrive without a matching tool_use in the same assistant turn.
+ * - Default: one-line summary per tool; click to expand result / params.
+ * - `ToolRunGroup`: collapsible strip when several tools run in a row.
  */
 
 import { useMemo, useState } from "react";
-import type { AgentMessagePart, AgentToolRunStatus } from "@shared/types";
+import type { AgentMessagePart, AgentToolRun, AgentToolRunStatus } from "@shared/types";
+import { sanitizeDisplayText } from "../utils/displayText";
 
-const STATUS_BADGE: Record<AgentToolRunStatus, { label: string; dot: string; bg: string }> = {
-  pending:            { label: "排队中", dot: "bg-white/40",      bg: "bg-white/[0.04]" },
-  permission_pending: { label: "等待批准", dot: "bg-amber-400",   bg: "bg-amber-500/10" },
-  running:            { label: "运行中", dot: "bg-sky-400 animate-pulse", bg: "bg-sky-500/10" },
-  completed:          { label: "已完成", dot: "bg-emerald-400",   bg: "bg-emerald-500/10" },
-  denied:             { label: "已拒绝", dot: "bg-red-400",       bg: "bg-red-500/10" },
-  errored:            { label: "出错",   dot: "bg-red-400",       bg: "bg-red-500/10" },
-  cancelled:          { label: "已取消", dot: "bg-white/40",      bg: "bg-white/[0.04]" }
-};
+const ACTIVE = new Set<AgentToolRunStatus>(["pending", "permission_pending", "running"]);
 
-const TOOL_ICON: Record<string, string> = {
-  Bash: "terminal",
-  Read: "file-text",
-  Write: "file-plus",
-  Edit: "edit-3",
-  Delete: "trash-2",
-  Glob: "search",
-  Grep: "search",
-  ListDir: "folder",
-  WebFetch: "globe",
-  WebSearch: "globe",
-  Task: "layers",
-  TodoWrite: "check-square",
-  Skill: "zap",
-  MemoryRead: "database",
-  MemoryWrite: "database",
-  ReadLints: "alert-circle"
-};
+export function ToolRunGroup({
+  parts,
+  toolRunsById,
+  resultByToolCallId,
+  defaultCollapsed = true,
+  streaming = false,
+  headerRunning = "正在执行工具…",
+  headerDone
+}: {
+  parts: AgentMessagePart[];
+  toolRunsById?: Record<string, AgentToolRun>;
+  resultByToolCallId: Record<string, AgentMessagePart>;
+  defaultCollapsed?: boolean;
+  streaming?: boolean;
+  headerRunning?: string;
+  headerDone?: (count: number, toolLabel: string) => string;
+}) {
+  const [open, setOpen] = useState(!defaultCollapsed && !streaming);
 
-function ToolIcon({ name }: { name: string }) {
-  const isMcp = name.startsWith("mcp__");
+  const summary = useMemo(() => {
+    const names = [...new Set(parts.map((p) => p.toolName).filter(Boolean))] as string[];
+    const label = names.length <= 3 ? names.join(" · ") : `${names.slice(0, 2).join(" · ")} 等`;
+    return { count: parts.length, label };
+  }, [parts]);
+
+  if (parts.length === 0) return null;
+
+  if (parts.length === 1) {
+    const p = parts[0]!;
+    const run = p.toolCallId ? toolRunsById?.[p.toolCallId] : undefined;
+    const result = p.toolCallId ? resultByToolCallId[p.toolCallId] ?? null : null;
+    return (
+      <ToolUseCard
+        part={p}
+        liveStatus={run?.status}
+        resultPart={result}
+        defaultExpanded={streaming || ACTIVE.has(run?.status ?? "completed")}
+      />
+    );
+  }
+
+  const title = streaming
+    ? headerRunning
+    : (headerDone?.(summary.count, summary.label) ?? `已执行 ${summary.count} 项`);
+
   return (
-    <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-md bg-white/[0.06] text-[12px]">
-      {isMcp ? "⚡" : name === "Bash" ? "$" : "→"}
-    </span>
+    <div className="w-full overflow-hidden rounded-lg border border-white/[0.08] bg-white/[0.02]">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition hover:bg-white/[0.03]"
+      >
+        <span className="text-[10px] text-[var(--lp-muted)]">{open ? "▾" : "▸"}</span>
+        <span className={`h-1.5 w-1.5 rounded-full ${streaming ? "animate-pulse bg-sky-400" : "bg-emerald-400/80"}`} />
+        <span className="min-w-0 flex-1 truncate text-[12.5px] text-[var(--lp-text)]/90">{title}</span>
+        {!open && summary.label ? (
+          <span className="max-w-[45%] truncate text-[11px] text-[var(--lp-muted)]">{summary.label}</span>
+        ) : null}
+      </button>
+      {open ? (
+        <div className="border-t border-white/[0.06]">
+          {parts.map((p) => {
+            const run = p.toolCallId ? toolRunsById?.[p.toolCallId] : undefined;
+            const result = p.toolCallId ? resultByToolCallId[p.toolCallId] ?? null : null;
+            return (
+              <ToolUseCard
+                key={p.id}
+                part={p}
+                liveStatus={run?.status}
+                resultPart={result}
+                nested
+                defaultExpanded={false}
+              />
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
-
-void TOOL_ICON;
 
 export function ToolUseCard({
   part,
   liveStatus,
   resultPart,
-  variant = "default"
+  nested = false,
+  defaultExpanded = false
 }: {
   part: AgentMessagePart;
   liveStatus?: AgentToolRunStatus;
   resultPart?: AgentMessagePart | null;
-  variant?: "default" | "plan-compact";
+  /** Inside `ToolRunGroup` — no outer card border. */
+  nested?: boolean;
+  defaultExpanded?: boolean;
 }) {
-  const compact = variant === "plan-compact";
   const status: AgentToolRunStatus = liveStatus ?? (part.isError ? "errored" : "completed");
-  const badge = STATUS_BADGE[status];
   const name = part.toolName ?? "tool";
   const subtitle = useMemo(() => summariseInput(name, part.inputJson), [name, part.inputJson]);
-  const [showInput, setShowInput] = useState(false);
+  const [open, setOpen] = useState(defaultExpanded || ACTIVE.has(status));
+  const [showParams, setShowParams] = useState(false);
+
   const hasResult = !!resultPart;
   const resultText = hasResult ? extractText(resultPart!) : "";
   const isError = resultPart?.isError ?? part.isError;
+  const canExpand = !!(resultText || part.inputJson || (name === "Bash" && subtitle));
 
-  const isDone = status === "completed" || status === "errored" || status === "denied" || status === "cancelled";
-  const showResult = isDone && hasResult && !!resultText && !compact;
+  const errorPreview = isError && resultText ? resultText.split("\n")[0] : "";
 
   return (
     <div
-      className={`group overflow-hidden rounded-xl border transition-all ${
-        isError ? "border-red-500/25" : "border-[var(--lp-border)]"
-      } ${compact ? "bg-white/[0.02]" : ""}`}
+      className={
+        nested
+          ? "border-b border-white/[0.05] last:border-b-0"
+          : `overflow-hidden rounded-lg border ${isError ? "border-red-500/20 bg-red-500/[0.02]" : "border-white/[0.08] bg-white/[0.02]"}`
+      }
     >
-      <div className={`flex items-center gap-2.5 ${compact ? "px-2 py-1.5" : "px-3 py-2"}`}>
-        <ToolIcon name={name} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-[13px] font-medium text-[var(--lp-text)]">{name}</span>
-            {subtitle ? (
-              <span className="truncate text-[12px] text-[var(--lp-soft-text)] opacity-70" title={subtitle}>
-                {subtitle}
-              </span>
-            ) : null}
-          </div>
-        </div>
-        <div className={`flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] ${badge.bg}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${badge.dot}`} />
-          <span className={isError ? "text-red-300" : status === "running" ? "text-sky-300" : "text-[var(--lp-soft-text)]"}>
-            {badge.label}
+      <button
+        type="button"
+        disabled={!canExpand}
+        onClick={() => canExpand && setOpen((v) => !v)}
+        className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left ${canExpand ? "hover:bg-white/[0.03] cursor-pointer" : "cursor-default"}`}
+      >
+        <span className="w-3 shrink-0 text-[10px] text-[var(--lp-muted)]">
+          {canExpand ? (open ? "▾" : "▸") : " "}
+        </span>
+        <StatusGlyph status={status} isError={isError} />
+        <span className="shrink-0 text-[12px] font-medium text-[var(--lp-text)]/90">{name}</span>
+        {subtitle ? (
+          <span
+            className="min-w-0 flex-1 truncate font-mono text-[11px] text-[var(--lp-muted)]"
+            title={subtitle}
+          >
+            {subtitle}
           </span>
-        </div>
-      </div>
+        ) : (
+          <span className="flex-1" />
+        )}
+        {!open && errorPreview ? (
+          <span className="max-w-[42%] truncate text-[11px] text-red-400/90" title={errorPreview}>
+            {errorPreview}
+          </span>
+        ) : null}
+        {!open && !errorPreview && status === "running" ? (
+          <span className="text-[11px] text-sky-300/80">…</span>
+        ) : null}
+      </button>
 
-      {!compact && name === "Bash" && subtitle ? (
-        <div className="border-t border-[var(--lp-border)] bg-black/25 px-3 py-2">
-          <code className="block overflow-x-auto whitespace-pre-wrap break-all font-mono text-[12px] text-[var(--lp-text)]/80">
-            <span className="text-emerald-400/60">$ </span>{subtitle}
+      {open && name === "Bash" && subtitle ? (
+        <div className="border-t border-white/[0.06] bg-black/20 px-3 py-1.5">
+          <code className="block overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11.5px] text-[var(--lp-text)]/75">
+            <span className="text-emerald-400/50">$ </span>
+            {subtitle}
           </code>
         </div>
       ) : null}
 
-      {showResult ? (
-        <div className={`border-t px-3 py-2 ${isError ? "border-red-500/20 bg-red-500/[0.04]" : "border-[var(--lp-border)] bg-black/15"}`}>
-          <pre className="max-h-[200px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-[var(--lp-soft-text)]">
-            {resultText.length > 2000 ? resultText.slice(0, 2000) + "\n…(truncated)" : resultText}
+      {open && resultText ? (
+        <div
+          className={`border-t px-3 py-2 ${isError ? "border-red-500/15 bg-red-500/[0.03]" : "border-white/[0.06] bg-black/15"}`}
+        >
+          <pre className="max-h-[min(280px,40vh)] overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed text-[var(--lp-soft-text)]">
+            {resultText.length > 4000 ? `${resultText.slice(0, 4000)}\n…(truncated)` : resultText}
           </pre>
         </div>
       ) : null}
 
-      {compact && isError && resultText ? (
-        <div className="border-t border-red-500/20 px-2 py-1 text-[11px] text-red-300/90 truncate">
-          {resultText.split("\n")[0]}
-        </div>
-      ) : null}
-
-      {!compact && part.inputJson ? (
-        <div className="border-t border-[var(--lp-border)]">
+      {open && part.inputJson ? (
+        <div className="border-t border-white/[0.06]">
           <button
             type="button"
-            onClick={() => setShowInput((v) => !v)}
-            className="flex w-full items-center gap-1.5 px-3 py-1.5 text-[11px] text-[var(--lp-muted)] hover:text-[var(--lp-soft-text)] transition"
+            onClick={() => setShowParams((v) => !v)}
+            className="flex w-full items-center gap-1.5 px-3 py-1 text-[10.5px] text-[var(--lp-muted)] hover:text-[var(--lp-soft-text)]"
           >
-            <span className="text-[10px]">{showInput ? "▾" : "▸"}</span>
-            <span>{showInput ? "隐藏参数" : "查看参数"}</span>
+            <span>{showParams ? "▾" : "▸"}</span>
+            <span>{showParams ? "隐藏参数" : "参数"}</span>
           </button>
-          {showInput ? (
-            <pre className="overflow-x-auto border-t border-[var(--lp-border)] bg-black/20 px-3 py-2 font-mono text-[11px] text-[var(--lp-soft-text)]">
+          {showParams ? (
+            <pre className="overflow-x-auto border-t border-white/[0.06] bg-black/20 px-3 py-1.5 font-mono text-[10.5px] text-[var(--lp-soft-text)]">
               {prettyJson(part.inputJson)}
             </pre>
           ) : null}
@@ -145,55 +199,56 @@ export function ToolUseCard({
 }
 
 export function ToolResultCard({ part }: { part: AgentMessagePart }) {
-  const isError = part.isError;
-  const text = extractText(part);
-  const preview = part.outputPreview ?? "";
-
   return (
-    <div className={`rounded-xl border overflow-hidden text-[13px] ${
-      isError ? "border-red-500/25 bg-red-500/[0.03]" : "border-[var(--lp-border)] bg-white/[0.02]"
-    }`}>
-      <div className="flex items-center gap-2 px-3 py-2">
-        <span className={`text-[13px] ${isError ? "text-red-400" : "text-emerald-400"}`}>
-          {isError ? "✕" : "✓"}
-        </span>
-        <span className="text-[12px] font-medium text-[var(--lp-soft-text)]">
-          {part.toolName ? `result` : "result"}
-        </span>
-        {!text && preview ? (
-          <span className="truncate text-[12px] text-[var(--lp-muted)]">{preview.split("\n")[0]}</span>
-        ) : null}
-      </div>
-      {text ? (
-        <div className={`border-t px-3 py-2 ${isError ? "border-red-500/20 bg-red-500/[0.04]" : "border-[var(--lp-border)] bg-black/15"}`}>
-          <pre className="max-h-[200px] overflow-auto whitespace-pre-wrap break-words font-mono text-[11.5px] leading-relaxed text-[var(--lp-soft-text)]">
-            {text.length > 2000 ? text.slice(0, 2000) + "\n…(truncated)" : text}
-          </pre>
-        </div>
-      ) : null}
-    </div>
+    <ToolUseCard
+      part={{
+        ...part,
+        type: "tool_use",
+        toolName: part.toolName ?? "result",
+        inputJson: null
+      }}
+      resultPart={part}
+      defaultExpanded={!!part.isError}
+    />
   );
 }
 
-/* -------------------------------------------------------------------------- */
-/* helpers                                                                    */
-/* -------------------------------------------------------------------------- */
+function StatusGlyph({ status, isError }: { status: AgentToolRunStatus; isError: boolean }) {
+  if (status === "permission_pending") {
+    return (
+      <span
+        className="inline-block h-2 w-2 shrink-0 animate-pulse rounded-full bg-amber-400/90"
+        aria-hidden
+      />
+    );
+  }
+  if (ACTIVE.has(status)) {
+    return (
+      <span
+        className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border border-sky-400/30 border-t-sky-400"
+        aria-hidden
+      />
+    );
+  }
+  if (isError || status === "errored" || status === "denied") {
+    return <span className="shrink-0 text-[11px] leading-none text-red-400" aria-hidden>✕</span>;
+  }
+  return <span className="shrink-0 text-[11px] leading-none text-emerald-400/75" aria-hidden>✓</span>;
+}
 
 function summariseInput(toolName: string, inputJson: string | null): string {
   if (!inputJson) return "";
   try {
     const v = JSON.parse(inputJson) as Record<string, unknown>;
     if (toolName === "Bash") return String(v.command ?? "");
-    if (toolName === "Read") return String(v.path ?? "");
-    if (toolName === "Write") return String(v.path ?? "");
-    if (toolName === "Edit") return String(v.path ?? "");
+    if (toolName === "Read" || toolName === "Write" || toolName === "Edit") return String(v.path ?? "");
     if (toolName === "Glob") return String(v.pattern ?? v.glob_pattern ?? "");
     if (toolName === "Grep") return String(v.pattern ?? "");
     if (toolName === "ListDir") return String(v.path ?? ".");
     if (toolName === "WebFetch") return String(v.url ?? "");
     if (toolName === "WebSearch") return String(v.query ?? v.search_term ?? "");
     for (const k of Object.keys(v)) {
-      if (typeof v[k] === "string") return `${k}=${v[k]}`;
+      if (typeof v[k] === "string") return String(v[k]);
     }
     return "";
   } catch {
@@ -211,19 +266,23 @@ function prettyJson(raw: string | null): string {
 }
 
 function extractText(part: AgentMessagePart): string {
+  let raw = "";
   if (part.outputJson) {
     try {
-      const v = JSON.parse(part.outputJson);
-      if (v?.output?.kind === "text") return String(v.output.text ?? "");
-      if (v?.output?.kind === "json") return JSON.stringify(v.output.value, null, 2);
-      if (v?.output?.kind === "mixed") {
-        return (v.output.blocks ?? [])
-          .map((b: { type: string; text?: string; mediaType?: string }) =>
-            b.type === "text" ? String(b.text ?? "") : `[image:${b.mediaType}]`
-          )
+      const v = JSON.parse(part.outputJson) as {
+        output?: { kind: string; text?: string; value?: unknown; blocks?: Array<{ type: string; text?: string; mediaType?: string }> };
+      };
+      if (v?.output?.kind === "text") raw = String(v.output.text ?? "");
+      else if (v?.output?.kind === "json") raw = JSON.stringify(v.output.value, null, 2);
+      else if (v?.output?.kind === "mixed") {
+        raw = (v.output.blocks ?? [])
+          .map((b) => (b.type === "text" ? String(b.text ?? "") : `[image:${b.mediaType}]`))
           .join("\n");
       }
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
   }
-  return part.outputPreview ?? "";
+  if (!raw) raw = part.outputPreview ?? "";
+  return sanitizeDisplayText(raw);
 }

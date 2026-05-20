@@ -2,7 +2,7 @@
 
 **A desktop AI agent workspace built for local project execution.**
 
-Little Peanut is a local-first Electron app that brings multi-model chat, agent execution, planning, pipeline orchestration, permission approval, MCP extensibility, and SQLite persistence into one desktop workflow.
+Little Peanut is a local-first Electron app that brings multi-model chat, agent execution, planning, review, pipeline orchestration, permission approval, MCP extensibility, and SQLite persistence into one desktop workflow.
 
 [中文文档](./README.md) · [Architecture](./docs/architecture.md) · `Node.js 22+` · `Electron` · `React` · `SQLite`
 
@@ -120,21 +120,35 @@ This is not a concept-only repository. The current codebase already contains a p
 - A pipeline configuration UI already exists
 - The main process already has a pipeline loop and completion report structure
 
-### 5. Permission Approval and Risk Gating
+### 5. Review Mode
+
+- Includes a project-oriented `review` mode for read-only code review rather than direct editing
+- Can build review context around commits, branches, or explicit diff scope
+- Returns layered review output: summary, blocker issues, major suggestions, and minor notes
+- The renderer already includes review-scope selection and launch flows
+
+### 6. Permission Approval and Risk Gating
 
 - Tool execution goes through a centralized permission gate
 - Bash commands are risk-classified
 - Destructive operations are escalated for explicit approval
 - Session-level and project-level permission rules are persisted
 - A bypass mode exists, but the default workflow still expects explicit approvals
+- File tools also combine project-path validation and path suggestions to reduce unsafe or mistaken access
 
-### 6. MCP and Extensibility
+### 7. Context Budgeting and History Compaction
+
+- The agent runtime enforces model-specific context budgets before each LLM call
+- Oversized history and large tool outputs are compacted automatically
+- The renderer can display budget usage, compaction state, and live context-budget snapshots during runs
+
+### 8. MCP and Extensibility
 
 - MCP server configuration, connectivity testing, enable or disable, and connection flows are already present
 - Supports `stdio`, `SSE`, and `HTTP` transports
 - The architecture already leaves room for future skills, tool ecosystems, and external integrations
 
-### 7. Local Persistence
+### 9. Local Persistence
 
 - SQLite persistence already covers conversations, messages, tool runs, tasks, permissions, memory indexes, and cost logs
 - The schema is maintained through migrations with explicit evolution rules
@@ -150,6 +164,7 @@ The product is not limited to a single “agent” mode. It already includes sev
 | `agent` | Action-oriented project execution |
 | `plan` | Read-only investigation and planning |
 | `pipeline` | Multi-stage orchestration |
+| `review` | Read-only code review over diff, commit, or branch scope |
 | `writing` | Drafting, polishing, translation, writing support |
 | `code` | Programming, debugging, and review |
 | `learning` | Concept explanation and tutoring |
@@ -287,7 +302,14 @@ If you plan to keep building the project, a few current constraints are importan
 | `npm run pack` | Generate a local packaged directory |
 | `npm run dist` | Build release installers |
 | `npm run dist:mac` | Build macOS installers |
-| `npm run dist:win` | Build Windows installers |
+| `npm run dist:win` | Build the Windows NSIS installer |
+
+## Packaging Notes
+
+- Windows currently ships as an **NSIS installer only**, not alongside a portable `.exe`, to avoid artifact name collisions
+- Windows icon assets live in `src/resources/icon.ico` and `src/resources/icon.png`
+- The Little Peanut icon can be regenerated with `src/__scripts__/generate-peanut-icon.ps1`
+- `signAndEditExecutable` is currently disabled in the Windows build config to work around `winCodeSign` symlink-permission issues on some machines; this does not prevent building the installer
 
 ## Project Layout
 

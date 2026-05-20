@@ -15,6 +15,10 @@ import type {
   CheckConnectivityResult,
   Conversation,
   GitStatusResult,
+  GitBranchesResponse,
+  GitCommitsResponse,
+  GitReviewDiffResponse,
+  ReviewScope,
   McpServerConfig,
   McpTestResult,
   ModelCapability,
@@ -146,6 +150,12 @@ const electronAPI = {
   // Git — structured `git status` for a project's working directory.
   getGitStatus: (projectPath: string) =>
     ipcRenderer.invoke(IPC.git.status, projectPath) as Promise<GitStatusResult>,
+  listGitBranches: (projectPath: string) =>
+    ipcRenderer.invoke(IPC.git.listBranches, projectPath) as Promise<GitBranchesResponse>,
+  listGitCommits: (projectPath: string, branch: string, limit?: number) =>
+    ipcRenderer.invoke(IPC.git.listCommits, projectPath, branch, limit) as Promise<GitCommitsResponse>,
+  getReviewDiff: (projectPath: string, scope: ReviewScope) =>
+    ipcRenderer.invoke(IPC.git.reviewDiff, projectPath, scope) as Promise<GitReviewDiffResponse>,
 
   // Conversations
   listConversations: (projectId: string | null) =>

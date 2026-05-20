@@ -339,6 +339,55 @@ export interface GitStatusErr {
 
 export type GitStatusResult = GitStatusOk | GitStatusErr;
 
+/** How a review-mode conversation selects its scope. */
+export type ReviewScopeKind = "uncommitted" | "commits" | "manual";
+
+export interface ReviewScope {
+  kind: ReviewScopeKind;
+  /** For `commits` — branch name (defaults to current). */
+  branch?: string;
+  /** For `commits` — full or short SHAs to review. */
+  commitIds?: string[];
+  /** For `manual` — free-text description when the project has no git repo. */
+  manualDescription?: string;
+  /** Human-readable label shown in the UI banner. */
+  label?: string;
+}
+
+export interface GitCommitSummary {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+
+export interface GitBranchesResult {
+  ok: true;
+  current: string | null;
+  branches: string[];
+}
+
+export interface GitCommitsResult {
+  ok: true;
+  branch: string;
+  commits: GitCommitSummary[];
+}
+
+export interface GitReviewDiffResult {
+  ok: true;
+  /** Unified diff text (may be truncated). */
+  diff: string;
+  /** One-line summary for the UI. */
+  summary: string;
+  truncated: boolean;
+  fileCount: number;
+}
+
+export type GitBranchesResponse = GitBranchesResult | GitStatusErr;
+export type GitCommitsResponse = GitCommitsResult | GitStatusErr;
+export type GitReviewDiffResponse = GitReviewDiffResult | GitStatusErr;
+
 // ─── MCP (Model Context Protocol) ────────────────────────────────────
 
 /**
@@ -581,6 +630,8 @@ export interface AgentStartRunInput {
   modeId?: string;
   language?: "zh-CN" | "en";
   pipelineStages?: PipelineStageConfig[];
+  /** Review mode — scope chosen in the setup wizard. */
+  reviewScope?: ReviewScope;
 }
 
 export interface AgentPermissionResponse {

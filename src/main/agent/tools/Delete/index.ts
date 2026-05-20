@@ -10,7 +10,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { buildTool, blockFromText, type Tool, type ToolResult } from "../Tool.js";
-import { validateProjectPath } from "../../permissions/pathValidation.js";
+import { validatePathForTool } from "../../permissions/validatePathForTool.js";
 
 const inputSchema = z.object({
   path: z
@@ -50,7 +50,7 @@ export const DeleteTool: Tool<typeof inputSchema, Output> = buildTool({
     if (ctx.signal.aborted) {
       return { ok: false, errorCode: "aborted", errorMessage: "aborted" };
     }
-    const guard = await validateProjectPath(input.path, ctx.projectRoot, {
+    const guard = await validatePathForTool(input.path, ctx.projectRoot, {
       mustExist: true,
       additionalWorkingDirectories: ctx.additionalWorkingDirectories
     });

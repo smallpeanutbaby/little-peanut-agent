@@ -10,6 +10,9 @@ import type {
   CheckConnectivityResult,
   Conversation,
   GitStatusResult,
+  GitBranchesResponse,
+  GitReviewDiffResponse,
+  ReviewScope,
   McpServerConfig,
   ModelCapability,
   ModelConfig,
@@ -24,6 +27,8 @@ import { getAdapter } from "../ai/adapter.js";
 import { getMode, compressMessages } from "@shared/modes.js";
 import { testMcpServer } from "../mcp/client.js";
 import { getGitStatus } from "../git/status.js";
+import { getReviewDiff, listGitBranches, listGitCommits } from "../git/review.js";
+import { formatUserFacingError } from "@shared/displayText.js";
 import { registerAgentIpc, cancelAllAgentRunsForSender } from "../agent/ipc.js";
 
 /** Tracks active streaming requests so the renderer can cancel them. */
@@ -240,7 +245,8 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
             if (accumulatedText || accumulatedReasoning) {
               database.finalizeMessage(req.assistantMessageId, accumulatedText, accumulatedReasoning || null);
             } else if (lastError) {
-              database.finalizeMessage(req.assistantMessageId, `⚠️ ${lastError}`, null);
+              const safe = formatUserFacingError(lastError, "stream_error");
+              database.finalizeMessage(req.assistantMessageId, `⚠️ ${safe}`, null);
             } else if (cancelled) {
               database.deleteMessage(req.assistantMessageId);
             }
@@ -313,6 +319,15 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
   // ─── Git ──────────────────────────────────────────────────────────
   ipcMain.handle(IPC.git.status, async (_e, projectPath: string): Promise<GitStatusResult> => {
     return getGitStatus(projectPath);
+  });
+  ipcMain.handle(IPC.git.listBranches, async (_e, projectPath: string): Promise<GitBranchesResponse> => {
+    return listGitBranches(projectPath);
+  });
+  ipcMain.handle(IPC.git.listCommits, async (_e, projectPath: string, branch: string, limit?: number) => {
+    return listGitCommits(projectPath, branch, limit);
+  });
+  ipcMain.handle(IPC.git.reviewDiff, async (_e, projectPath: string, scope: ReviewScope): Promise<GitReviewDiffResponse> => {
+    return getReviewDiff(projectPath, scope);
   });
 
   // ─── MCP Servers ──────────────────────────────────────────────────

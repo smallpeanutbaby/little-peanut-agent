@@ -15,6 +15,7 @@
 import { parseSse } from "../../../ai/adapter.js";
 import { mapBudget } from "../../../ai/adapter.js";
 import type { LlmAdapter, LlmRequest, LlmStreamEvent, CanonicalMessage } from "../types.js";
+import { formatUserFacingError } from "@shared/displayText.js";
 
 type StopReason = "end_turn" | "tool_use" | "max_tokens" | "stop_sequence" | "error" | undefined;
 
@@ -242,7 +243,7 @@ export class OpenAILlmAdapter implements LlmAdapter {
         type: "error",
         code: String(res.status),
         retryable: res.status === 429 || res.status >= 500,
-        message: text
+        message: formatUserFacingError(text, "stream_error")
       };
       return;
     }
@@ -270,7 +271,14 @@ export class OpenAILlmAdapter implements LlmAdapter {
         if (choice) {
           const delta = choice.delta as Record<string, unknown> | undefined;
           if (delta) {
-            const rContent = delta.reasoning_content;
+            const rContent =
+              delta.reasoning_content ??
+              delta.reasoning ??
+              (typeof delta.reasoning === "object" &&
+              delta.reasoning !== null &&
+              typeof (delta.reasoning as { content?: unknown }).content === "string"
+                ? (delta.reasoning as { content: string }).content
+                : undefined);
             if (typeof rContent === "string" && rContent.length > 0) {
               yield { type: "reasoning_delta", text: rContent };
             }

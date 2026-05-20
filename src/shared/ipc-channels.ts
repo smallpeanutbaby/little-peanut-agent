@@ -84,7 +84,10 @@ export const IPC = {
     openPath: "shell:open-path"
   },
   git: {
-    status: "git:status"
+    status: "git:status",
+    listBranches: "git:list-branches",
+    listCommits: "git:list-commits",
+    reviewDiff: "git:review-diff"
   },
   agent: {
     startRun: "agent:start-run",

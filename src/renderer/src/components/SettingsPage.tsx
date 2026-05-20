@@ -55,6 +55,9 @@ class SettingsErrorBoundary extends Component<{ onClose: () => void; children: R
 
 type SettingsCategory = "general" | "mcp" | "about";
 
+/** Temporarily hide subtitle + General nav until that pane is product-ready. */
+const SHOW_GENERAL_SETTINGS = false;
+
 interface SettingsPageProps {
   onClose: () => void;
   appVersion?: string;
@@ -124,12 +127,16 @@ function SettingsPageInner({ onClose, appVersion }: SettingsPageProps) {
         </div>
         <div className="px-5 pb-3 pt-4">
           <div className="text-[15px] font-semibold tracking-tight">{t("settings.title")}</div>
-          <div className="mt-0.5 text-[11.5px] text-[var(--lp-soft-text)]">{t("settings.subtitle")}</div>
+          {SHOW_GENERAL_SETTINGS ? (
+            <div className="mt-0.5 text-[11.5px] text-[var(--lp-soft-text)]">{t("settings.subtitle")}</div>
+          ) : null}
         </div>
         <nav className="flex-1 overflow-y-auto px-2 pb-4">
-          <CategoryGroup label={t("settings.groupGeneral")}>
-            <CategoryItem active={category === "general"} onClick={() => setCategory("general")} icon={IconGear} label={t("settings.general")} />
-          </CategoryGroup>
+          {SHOW_GENERAL_SETTINGS ? (
+            <CategoryGroup label={t("settings.groupGeneral")}>
+              <CategoryItem active={category === "general"} onClick={() => setCategory("general")} icon={IconGear} label={t("settings.general")} />
+            </CategoryGroup>
+          ) : null}
           <CategoryGroup label={t("settings.groupExtensions")}>
             <CategoryItem active={category === "mcp"} onClick={() => setCategory("mcp")} icon={IconPlug} label={t("settings.mcp")} />
           </CategoryGroup>

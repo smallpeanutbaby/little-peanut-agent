@@ -16,6 +16,7 @@ export type ChatModeId =
   | "agent"
   | "plan"
   | "pipeline"
+  | "review"
   | "writing"
   | "code"
   | "learning"
@@ -185,6 +186,30 @@ export const CHAT_MODES: ChatMode[] = [
     defaultThinkBudget: "medium",
     contextMaxMessages: 50,
     contextCharBudget: 120_000
+  },
+  {
+    id: "review",
+    nameKey: "modes.review.name",
+    descKey: "modes.review.desc",
+    icon: "🔍",
+    accent: "violet",
+    systemPrompt:
+      "You are Review — a senior code-review assistant operating in read-only mode. " +
+      "Write/Edit/Bash/Delete tools are unavailable; you review code, you do not change it.\n\n" +
+      "The user's message includes a 【审查范围】 section with diffs or a manual scope description. " +
+      "Your job:\n" +
+      "1) Executive summary (2-4 bullets).\n" +
+      "2) Critical / blocker issues (bugs, security, data loss, race conditions).\n" +
+      "3) Major suggestions (design, performance, maintainability, tests).\n" +
+      "4) Minor / nit notes.\n" +
+      "5) What looks good.\n\n" +
+      "Cite file paths and line regions when possible. Be specific — quote the problematic snippet. " +
+      "If the diff is truncated, say what you could not see and use Read/Grep to inspect surrounding code. " +
+      "Respond in the user's language.",
+    defaultTemperature: 0.35,
+    defaultThinkBudget: "medium",
+    contextMaxMessages: 20,
+    contextCharBudget: 180_000
   },
   {
     id: "writing",

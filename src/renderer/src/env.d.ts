@@ -16,6 +16,10 @@ import type {
   CheckConnectivityResult,
   Conversation,
   GitStatusResult,
+  GitBranchesResponse,
+  GitCommitsResponse,
+  GitReviewDiffResponse,
+  ReviewScope,
   McpServerConfig,
   McpTestResult,
   ModelCapability,
@@ -100,6 +104,9 @@ declare global {
       openPath: (path: string) => Promise<string>;
       // Git
       getGitStatus: (projectPath: string) => Promise<GitStatusResult>;
+      listGitBranches: (projectPath: string) => Promise<GitBranchesResponse>;
+      listGitCommits: (projectPath: string, branch: string, limit?: number) => Promise<GitCommitsResponse>;
+      getReviewDiff: (projectPath: string, scope: ReviewScope) => Promise<GitReviewDiffResponse>;
       // Conversations
       listConversations: (projectId: string | null) => Promise<Conversation[]>;
       getConversation: (id: string) => Promise<Conversation | null>;

@@ -19,6 +19,7 @@
  *    promise the gate awaits.
  */
 
+import { formatUserFacingError } from "@shared/displayText.js";
 import { ipcMain, app, type WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
@@ -117,7 +118,12 @@ export function registerAgentIpc(database: AppDatabase): void {
       if (!project) {
         throw new Error(`unknown project ${input.projectId}`);
       }
-      const projectRoot = project.path || process.cwd();
+      const projectRoot = (project.path ?? "").trim();
+      if (!projectRoot) {
+        throw new Error(
+          "项目未绑定本地目录。请在项目中重新选择仓库文件夹（例如 F:\\OpsAdminApi）。"
+        );
+      }
       // Surface a clear error if the user's bound project folder no
       // longer exists on disk (renamed / deleted / external drive
       // unmounted). Without this, every Bash / ListDir / Read call
@@ -252,7 +258,7 @@ export function registerAgentIpc(database: AppDatabase): void {
       // servers are also denied in plan mode — a deliberate safe
       // default, since we can't introspect arbitrary MCP semantics.
       const tools: Tool[] =
-        mode.id === "plan"
+        mode.id === "plan" || mode.id === "review"
           ? allTools.filter((t) => {
               try {
                 return t.isReadOnly({} as never) === true;
@@ -287,7 +293,8 @@ export function registerAgentIpc(database: AppDatabase): void {
           thinkBudget: input.thinkBudget,
           maxOutputTokens: input.maxOutputTokens,
           modeId: input.modeId,
-          language: input.language
+          language: input.language,
+          ...(input.reviewScope ? { reviewScope: input.reviewScope } : {})
         });
       } catch (e) {
         console.warn("[agent] markConversationRun(in_progress) failed", e);
@@ -295,6 +302,52 @@ export function registerAgentIpc(database: AppDatabase): void {
 
       void (async () => {
         try {
+          let userMessage = input.userMessage;
+          if (mode.id === "review") {
+            if (!input.reviewScope) {
+              sender.send(channel, {
+                kind: "terminal",
+                reason: "stream_error",
+                message: "审查模式需要先配置审查范围"
+              } satisfies AgentRunEvent);
+              return;
+            }
+            if (
+              input.reviewScope.kind === "commits" &&
+              !(input.reviewScope.commitIds?.length ?? 0)
+            ) {
+              sender.send(channel, {
+                kind: "terminal",
+                reason: "stream_error",
+                message: "审查范围无效：请重新配置并至少选择一个提交"
+              } satisfies AgentRunEvent);
+              return;
+            }
+            const { getReviewDiff, buildReviewUserMessage, resolveReviewScopeLabel } = await import("../git/review.js");
+            const diffResult = await getReviewDiff(projectRoot, input.reviewScope);
+            if (!diffResult.ok) {
+              const errText = formatUserFacingError(
+                diffResult.message ?? "无法获取审查 diff",
+                diffResult.reason,
+                input.language === "en" ? "en" : "zh"
+              );
+              console.warn("[agent] getReviewDiff failed", diffResult.reason, diffResult.message);
+              // Do not persist user/assistant rows — each failure used to spam the thread.
+              sender.send(channel, {
+                kind: "terminal",
+                reason: "stream_error",
+                message: errText
+              } satisfies AgentRunEvent);
+              return;
+            }
+            const label = await resolveReviewScopeLabel(projectRoot, input.reviewScope);
+            userMessage = buildReviewUserMessage(
+              input.userMessage,
+              { ...input.reviewScope, label },
+              diffResult
+            );
+          }
+
           const primaryProvider: ProviderRef = {
             id: input.providerId,
             protocol: input.protocol,
@@ -310,7 +363,7 @@ export function registerAgentIpc(database: AppDatabase): void {
                   projectId: input.projectId,
                   projectRoot,
                   projectName: project.name,
-                  userMessage: input.userMessage,
+                  userMessage,
                   mode,
                   language: input.language ?? "zh-CN",
                   tools,
@@ -327,7 +380,7 @@ export function registerAgentIpc(database: AppDatabase): void {
                   projectId: input.projectId,
                   projectRoot,
                   projectName: project.name,
-                  userMessage: input.userMessage,
+                  userMessage,
                   mode,
                   provider: primaryProvider,
                   model: input.model,
@@ -482,29 +535,16 @@ export function registerAgentIpc(database: AppDatabase): void {
       // codepath at startup. Note these modules are still bundled into the
       // main process; this is just an import-graph nicety.
       const { modelContextFor } = await import("./context/modelLimits.js");
-      const { tokensForHistory } = await import("./context/tokenizer.js");
-      const messages = database.listMessages(input.conversationId);
-      // Cheap canonicalisation: tokensForHistory only needs text content,
-      // so we wrap each message in a single text block (matching how the
-      // queryLoop's `loadCanonicalHistory` would emit legacy rows without
-      // parts). Per-tool-call parts in newer rows are summarised via the
-      // text preview the renderer already persists. This stays a
-      // best-effort estimate — we'd over-count slightly compared to the
-      // real per-tool-block tokenisation, but the user reads this number
-      // as a rough utilisation gauge, not a billing meter.
-      const history = messages
-        .filter((m) => m.role !== "system")
-        .map((m) => ({
-          role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
-          blocks: [{ type: "text" as const, text: m.content ?? "" }]
-        }));
-      const usedTokens = tokensForHistory(history);
+      const { loadCanonicalHistory } = await import("./context/history.js");
+      const { prepareContextForLlm } = await import("./context/budget.js");
+      const history = loadCanonicalHistory(database, database.agent, input.conversationId);
       const ctx = modelContextFor(input.model, { thinkBudget: input.thinkBudget });
+      const prepared = prepareContextForLlm(history, ctx);
       return {
-        usedTokens,
+        usedTokens: prepared.usedTokens,
         budgetTokens: ctx.promptBudget,
         windowTokens: ctx.contextWindow,
-        compacted: false
+        compacted: prepared.compacted
       };
     }
   );
@@ -540,7 +580,12 @@ export function registerAgentIpc(database: AppDatabase): void {
       if (!project) {
         throw new Error(`unknown project ${conv.projectId}`);
       }
-      const projectRoot = project.path || process.cwd();
+      const projectRoot = (project.path ?? "").trim();
+      if (!projectRoot) {
+        throw new Error(
+          "项目未绑定本地目录。请在项目中重新选择仓库文件夹后再恢复任务。"
+        );
+      }
       // Same project-root guard as startRun — see comment there.
       try {
         const st = fs.statSync(projectRoot);
