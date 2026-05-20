@@ -77,11 +77,19 @@ export const IPC = {
     setEnabled: "mcp:set-enabled",
     test: "mcp:test"
   },
+  channels: {
+    list: "channels:list",
+    save: "channels:save",
+    status: "channels:status",
+    test: "channels:test",
+    restart: "channels:restart"
+  },
   dialog: {
     pickDirectory: "dialog:pick-directory"
   },
   shell: {
-    openPath: "shell:open-path"
+    openPath: "shell:open-path",
+    openExternal: "shell:open-external"
   },
   git: {
     status: "git:status",

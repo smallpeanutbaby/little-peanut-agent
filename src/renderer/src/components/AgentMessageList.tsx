@@ -465,11 +465,13 @@ function ReasoningBlock({
 }) {
   const [open, setOpen] = useState(false);
   const hasText = text.trim().length > 0;
-  if (!hasText && !streaming) return null;
 
+  // Hooks must run unconditionally — early return below.
   useEffect(() => {
     if (streaming || hasText) setOpen(true);
   }, [streaming, hasText]);
+
+  if (!hasText && !streaming) return null;
 
   return (
     <div className="w-full max-w-full">

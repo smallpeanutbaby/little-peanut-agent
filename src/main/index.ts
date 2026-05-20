@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, shell } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { AppDatabase } from "./db/database.js";
@@ -44,15 +44,19 @@ function createWindow() {
     }
   });
 
-  if (process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
-    // DevTools is opt-in even in dev. Set LP_OPEN_DEVTOOLS=1 to auto-open,
-    // or just press F12 / Ctrl+Shift+I in the running window.
-    if (process.env.LP_OPEN_DEVTOOLS === "1") {
-      mainWindow.webContents.openDevTools({ mode: "detach" });
+  const devUrl = process.env.ELECTRON_RENDERER_URL;
+  const loadRenderer = () => {
+    if (!mainWindow) return;
+    if (devUrl) {
+      void mainWindow.loadURL(devUrl);
+    } else {
+      void mainWindow.loadFile(path.join(__dirname, "../../dist/index.html"));
     }
-  } else {
-    void mainWindow.loadFile(path.join(__dirname, "../../dist/index.html"));
+  };
+  loadRenderer();
+
+  if (devUrl && process.env.LP_OPEN_DEVTOOLS === "1") {
+    mainWindow.webContents.openDevTools({ mode: "detach" });
   }
 
   mainWindow.webContents.on("render-process-gone", (_e, details) => {
@@ -61,8 +65,34 @@ function createWindow() {
   mainWindow.webContents.on("preload-error", (_e, preloadPath, error) => {
     console.error("[main] preload-error:", preloadPath, error);
   });
-  mainWindow.webContents.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL) => {
-    console.error("[main] did-fail-load:", errorCode, errorDescription, validatedURL);
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      if (!isMainFrame) return;
+      // -3 = ERR_ABORTED (navigation cancelled); ignore.
+      if (errorCode === -3) return;
+      console.error("[main] did-fail-load:", errorCode, errorDescription, validatedURL);
+      if (!mainWindow) return;
+      const html = `<!DOCTYPE html><html><body style="margin:0;background:#0a0a0a;color:#e8e8e8;font:14px/1.6 system-ui;padding:32px">
+<h1 style="margin:0 0 12px;font-size:20px">界面加载失败</h1>
+<p>无法打开：<code>${validatedURL}</code></p>
+<p>${errorDescription} (${errorCode})</p>
+<p style="color:#aaa">开发模式常见原因：5173 端口被旧进程占用，Vite 换到 5174 但 Electron 仍访问 5173。</p>
+<p>请关闭所有 Little Peanut / 终端里的 <code>npm run dev</code>，再重新运行。</p>
+</body></html>`;
+      event.preventDefault();
+      void mainWindow.loadURL(
+        `data:text/html;charset=utf-8,${encodeURIComponent(html)}`
+      );
+    }
+  );
+
+  // Never spawn blank child Electron windows (window.open / target=_blank).
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("http:") || url.startsWith("https:")) {
+      void shell.openExternal(url);
+    }
+    return { action: "deny" };
   });
 
   // When the window goes away, abort any in-flight chat streams so we don't
@@ -87,6 +117,7 @@ app.whenReady().then(() => {
     },
     database
   );
+  // Channel bot manager is initialized inside registerIpc.
 
   createWindow();
 

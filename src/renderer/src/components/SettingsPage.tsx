@@ -1,6 +1,7 @@
 import { Component, useCallback, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type { McpServerConfig, McpTestResult, McpTransport } from "@shared/types";
+import { ChannelBotsPane } from "./ChannelBotsSettings";
 
 /**
  * Local error boundary so a render-time bug inside SettingsPage doesn't black
@@ -16,7 +17,7 @@ class SettingsErrorBoundary extends Component<{ onClose: () => void; children: R
   render() {
     if (!this.state.error) return this.props.children;
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--lp-main-bg)] p-8 text-[var(--lp-text)]">
+      <div className="fixed inset-0 z-[400] flex items-center justify-center bg-[var(--lp-main-bg)] p-8 text-[var(--lp-text)]">
         <div className="max-w-[640px] rounded-xl border border-red-500/40 bg-red-500/10 p-6">
           <div className="text-[16px] font-semibold text-red-300">设置页崩溃</div>
           <pre className="mt-3 max-h-[40vh] overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] text-red-200">
@@ -53,7 +54,7 @@ class SettingsErrorBoundary extends Component<{ onClose: () => void; children: R
  * (see src/main/mcp/client.ts).
  */
 
-type SettingsCategory = "general" | "mcp" | "about";
+type SettingsCategory = "general" | "mcp" | "bots" | "about";
 
 /** Temporarily hide subtitle + General nav until that pane is product-ready. */
 const SHOW_GENERAL_SETTINGS = false;
@@ -90,13 +91,14 @@ function SettingsPageInner({ onClose, appVersion }: SettingsPageProps) {
        the settings overlay. Use `--lp-bg` (#0a0a0a) for a hard cutoff, with
        a subtle radial highlight for depth. */
     <div
-      className="fixed inset-0 z-50 flex text-[var(--lp-text)]"
+      className="fixed inset-0 z-[400] flex text-[var(--lp-text)]"
       style={{
+        WebkitAppRegion: "no-drag",
         backgroundColor: "var(--lp-bg)",
         backgroundImage:
           "radial-gradient(1200px 600px at 20% -10%, rgba(255,255,255,0.04), transparent 60%), " +
           "radial-gradient(900px 500px at 100% 110%, rgba(255,255,255,0.03), transparent 55%)"
-      }}
+      } as React.CSSProperties}
     >
       {/* Left rail */}
       <aside className="flex w-[248px] shrink-0 flex-col border-r border-white/[0.06] bg-black/30">
@@ -138,6 +140,7 @@ function SettingsPageInner({ onClose, appVersion }: SettingsPageProps) {
             </CategoryGroup>
           ) : null}
           <CategoryGroup label={t("settings.groupExtensions")}>
+            <CategoryItem active={category === "bots"} onClick={() => setCategory("bots")} icon={IconBot} label={t("settings.bots")} />
             <CategoryItem active={category === "mcp"} onClick={() => setCategory("mcp")} icon={IconPlug} label={t("settings.mcp")} />
           </CategoryGroup>
           <CategoryGroup label={t("settings.groupOther")}>
@@ -169,6 +172,7 @@ function SettingsPageInner({ onClose, appVersion }: SettingsPageProps) {
         </div>
         <div className="flex-1 overflow-y-auto">
           {category === "general" ? <GeneralPane /> : null}
+          {category === "bots" ? <ChannelBotsPane /> : null}
           {category === "mcp" ? <McpPane /> : null}
           {category === "about" ? <AboutPane appVersion={appVersion} /> : null}
         </div>
@@ -179,6 +183,7 @@ function SettingsPageInner({ onClose, appVersion }: SettingsPageProps) {
 
 function categoryLabel(t: (k: string) => string, c: SettingsCategory): string {
   if (c === "general") return t("settings.general");
+  if (c === "bots") return t("settings.bots");
   if (c === "mcp") return t("settings.mcp");
   return t("settings.about");
 }
@@ -657,7 +662,7 @@ function McpFormModal({ initial, onClose, onSave }: {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/65 p-6 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-[410] flex items-center justify-center bg-black/65 p-6 backdrop-blur-sm" onClick={onClose}>
       <div
         className="flex max-h-[88vh] w-full max-w-[640px] flex-col overflow-hidden rounded-2xl border border-white/[0.1] text-[var(--lp-text)] shadow-[0_24px_64px_rgba(0,0,0,0.55)]"
         style={{ backgroundColor: "#141416" }}
@@ -904,6 +909,17 @@ function AboutPane({ appVersion }: { appVersion?: string }) {
 function IconGear() {
   return (
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  );
+}
+
+function IconBot() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="5" y="8" width="14" height="11" rx="2" />
+      <path d="M9 8V6a3 3 0 0 1 6 0v2" />
+      <line x1="9" y1="13" x2="9.01" y2="13" />
+      <line x1="15" y1="13" x2="15.01" y2="13" />
+    </svg>
   );
 }
 

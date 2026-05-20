@@ -20,6 +20,12 @@ import type {
   ThinkProtocol
 } from "@shared/types.js";
 import { decryptSecret, encryptSecret, isEncrypted } from "../security/secret-store.js";
+import {
+  CHANNEL_BOT_KINDS,
+  type ChannelBotConfig,
+  type ChannelBotKind,
+  type ChannelBotSaveInput
+} from "@shared/channelBots.js";
 import { CURRENT_SCHEMA_VERSION, runMigrations } from "./migrations.js";
 import { AgentStore } from "./agent-store.js";
 
@@ -333,6 +339,12 @@ export class AppDatabase {
   }
 
   saveProviderConfig(config: ProviderConfig) {
+    // Never wipe a stored key when the UI saves with an empty field (blur race, toggle before load).
+    let apiKey = config.apiKey;
+    if (!apiKey.trim()) {
+      const existing = this.getProviderConfig(config.id);
+      if (existing?.apiKey?.trim()) apiKey = existing.apiKey;
+    }
     this.db
       .prepare(`INSERT INTO provider_config (id, name, api_key, base_url, enabled, protocol, is_custom)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -346,7 +358,7 @@ export class AppDatabase {
       .run(
         config.id,
         config.name,
-        encryptSecret(config.apiKey),
+        encryptSecret(apiKey),
         config.baseUrl,
         config.enabled ? 1 : 0,
         config.protocol,
@@ -840,6 +852,202 @@ export class AppDatabase {
   setMcpServerEnabled(id: string, enabled: boolean) {
     this.db.prepare(`UPDATE mcp_server SET enabled=?, updated_at=? WHERE id=?`).run(enabled ? 1 : 0, nowMs(), id);
   }
+
+  // ─── Channel bots (QQ / Feishu / DingTalk) ─────────────────────────
+
+  listChannelBots(): ChannelBotConfig[] {
+    for (const id of CHANNEL_BOT_KINDS) {
+      this.ensureChannelBotRow(id);
+    }
+    const rows = this.db
+      .prepare(`SELECT * FROM channel_bot ORDER BY id ASC`)
+      .all() as ChannelBotRow[];
+    return rows.map(rowToChannelBot);
+  }
+
+  getChannelBot(id: ChannelBotKind): ChannelBotConfig | null {
+    this.ensureChannelBotRow(id);
+    const row = this.db.prepare(`SELECT * FROM channel_bot WHERE id=?`).get(id) as ChannelBotRow | undefined;
+    return row ? rowToChannelBot(row) : null;
+  }
+
+  saveChannelBot(input: ChannelBotSaveInput): ChannelBotConfig {
+    this.ensureChannelBotRow(input.id);
+    const existing = this.db.prepare(`SELECT * FROM channel_bot WHERE id=?`).get(input.id) as ChannelBotRow;
+    const now = nowMs();
+    const appSecretEnc =
+      input.appSecret && input.appSecret.trim()
+        ? encryptSecret(input.appSecret.trim())
+        : existing.app_secret_enc;
+    const tokenEnc =
+      input.token && input.token.trim() ? encryptSecret(input.token.trim()) : existing.token_enc;
+    const allowJson = JSON.stringify(
+      input.allowFrom.map((s) => s.trim()).filter(Boolean)
+    );
+    this.db
+      .prepare(
+        `UPDATE channel_bot SET
+          enabled=?, app_id=?, app_secret_enc=?, token_enc=?, allow_from_json=?,
+          default_mode_id=?, default_project_id=?, sandbox_mode=?, updated_at=?
+         WHERE id=?`
+      )
+      .run(
+        input.enabled ? 1 : 0,
+        input.appId.trim(),
+        appSecretEnc,
+        tokenEnc,
+        allowJson,
+        input.defaultModeId,
+        input.defaultProjectId,
+        input.sandboxMode ? 1 : 0,
+        now,
+        input.id
+      );
+    return this.getChannelBot(input.id)!;
+  }
+
+  getChannelBotSecrets(
+    id: ChannelBotKind
+  ): { appId: string; appSecret: string; botToken: string } | null {
+    this.ensureChannelBotRow(id);
+    const row = this.db.prepare(`SELECT * FROM channel_bot WHERE id=?`).get(id) as ChannelBotRow;
+    if (!row) return null;
+    return {
+      appId: row.app_id ?? "",
+      appSecret: decryptSecret(row.app_secret_enc),
+      botToken: decryptSecret(row.token_enc)
+    };
+  }
+
+  getImSession(
+    channel: string,
+    peerId: string
+  ): {
+    activeProjectId: string | null;
+    activeConversationId: string | null;
+    activeModeId: string;
+    activeProviderId: string | null;
+    activeModelId: string | null;
+    lastMenu: string | null;
+    lastMenuAt: number | null;
+    replySeq: Record<string, number>;
+  } | null {
+    const row = this.db
+      .prepare(`SELECT * FROM channel_im_session WHERE channel=? AND peer_id=?`)
+      .get(channel, peerId) as
+      | {
+          active_project_id: string | null;
+          active_conversation_id: string | null;
+          active_mode_id: string;
+          active_provider_id?: string | null;
+          active_model_id?: string | null;
+          last_menu?: string | null;
+          last_menu_at?: number | null;
+          reply_seq_json: string;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      activeProjectId: row.active_project_id,
+      activeConversationId: row.active_conversation_id,
+      activeModeId: row.active_mode_id,
+      activeProviderId: row.active_provider_id ?? null,
+      activeModelId: row.active_model_id ?? null,
+      lastMenu: row.last_menu ?? null,
+      lastMenuAt: row.last_menu_at ?? null,
+      replySeq: safeJson<Record<string, number>>(row.reply_seq_json, {})
+    };
+  }
+
+  saveImSession(input: {
+    channel: string;
+    peerId: string;
+    activeProjectId: string | null;
+    activeConversationId: string | null;
+    activeModeId: string;
+    activeProviderId?: string | null;
+    activeModelId?: string | null;
+    lastMenu?: string | null;
+    lastMenuAt?: number | null;
+    replySeqJson: string;
+  }): void {
+    const now = nowMs();
+    this.db
+      .prepare(
+        `INSERT INTO channel_im_session (
+          channel, peer_id, active_project_id, active_conversation_id,
+          active_mode_id, active_provider_id, active_model_id,
+          last_menu, last_menu_at, reply_seq_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(channel, peer_id) DO UPDATE SET
+          active_project_id=excluded.active_project_id,
+          active_conversation_id=excluded.active_conversation_id,
+          active_mode_id=excluded.active_mode_id,
+          active_provider_id=excluded.active_provider_id,
+          active_model_id=excluded.active_model_id,
+          last_menu=excluded.last_menu,
+          last_menu_at=excluded.last_menu_at,
+          reply_seq_json=excluded.reply_seq_json,
+          updated_at=excluded.updated_at`
+      )
+      .run(
+        input.channel,
+        input.peerId,
+        input.activeProjectId,
+        input.activeConversationId,
+        input.activeModeId,
+        input.activeProviderId ?? null,
+        input.activeModelId ?? null,
+        input.lastMenu ?? null,
+        input.lastMenuAt ?? null,
+        input.replySeqJson,
+        now
+      );
+  }
+
+  private ensureChannelBotRow(id: ChannelBotKind): void {
+    const row = this.db.prepare(`SELECT id FROM channel_bot WHERE id=?`).get(id);
+    if (row) return;
+    const now = nowMs();
+    this.db
+      .prepare(
+        `INSERT INTO channel_bot (
+          id, enabled, app_id, app_secret_enc, token_enc, allow_from_json,
+          default_mode_id, default_project_id, sandbox_mode, created_at, updated_at
+        ) VALUES (?, 0, '', '', '', '[]', 'chat', NULL, 1, ?, ?)`
+      )
+      .run(id, now, now);
+  }
+}
+
+type ChannelBotRow = {
+  id: string;
+  enabled: number;
+  app_id: string;
+  app_secret_enc: string;
+  token_enc: string;
+  allow_from_json: string;
+  default_mode_id: string;
+  default_project_id: string | null;
+  sandbox_mode: number;
+  created_at: number;
+  updated_at: number;
+};
+
+function rowToChannelBot(row: ChannelBotRow): ChannelBotConfig {
+  return {
+    id: row.id as ChannelBotKind,
+    enabled: !!row.enabled,
+    appId: row.app_id ?? "",
+    hasAppSecret: !!(row.app_secret_enc && row.app_secret_enc.length > 0),
+    hasToken: !!(row.token_enc && row.token_enc.length > 0),
+    allowFrom: safeJson<string[]>(row.allow_from_json, []),
+    defaultModeId: (row.default_mode_id || "chat") as ChannelBotConfig["defaultModeId"],
+    defaultProjectId: row.default_project_id,
+    sandboxMode: !!row.sandbox_mode,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
 }
 
 function rowToMcpServer(row: {

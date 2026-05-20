@@ -30,6 +30,8 @@ import { getGitStatus } from "../git/status.js";
 import { getReviewDiff, listGitBranches, listGitCommits } from "../git/review.js";
 import { formatUserFacingError } from "@shared/displayText.js";
 import { registerAgentIpc, cancelAllAgentRunsForSender } from "../agent/ipc.js";
+import type { ChannelBotKind, ChannelBotSaveInput } from "@shared/channelBots.js";
+import { channelBotManager } from "../channels/manager.js";
 
 /** Tracks active streaming requests so the renderer can cancel them. */
 const activeStreams = new Map<string, AbortController>();
@@ -315,6 +317,12 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
     if (!path || typeof path !== "string") return "invalid path";
     return shell.openPath(path);
   });
+  ipcMain.handle(IPC.shell.openExternal, async (_e, url: string): Promise<void> => {
+    if (!url || typeof url !== "string" || (!url.startsWith("http:") && !url.startsWith("https:"))) {
+      throw new Error("invalid url");
+    }
+    await shell.openExternal(url);
+  });
 
   // ─── Git ──────────────────────────────────────────────────────────
   ipcMain.handle(IPC.git.status, async (_e, projectPath: string): Promise<GitStatusResult> => {
@@ -340,6 +348,26 @@ export function registerIpc(appInfo: AppInfo, database: AppDatabase) {
     return database.getMcpServer(id);
   });
   ipcMain.handle(IPC.mcp.test, async (_e, cfg: McpServerConfig) => testMcpServer(cfg));
+
+  // ─── IM channel bots ───────────────────────────────────────────────
+  channelBotManager.init(database);
+
+  ipcMain.handle(IPC.channels.list, () => database.listChannelBots());
+  ipcMain.handle(IPC.channels.save, (_e, input: ChannelBotSaveInput) => {
+    const saved = database.saveChannelBot(input);
+    channelBotManager.applyOne(saved.id);
+    return saved;
+  });
+  ipcMain.handle(IPC.channels.status, () => channelBotManager.listStatus());
+  ipcMain.handle(IPC.channels.test, async (_e, id: ChannelBotKind) => {
+    const cfg = database.getChannelBot(id);
+    if (!cfg) return { ok: false, message: "未知渠道" };
+    return channelBotManager.testConfig(cfg);
+  });
+  ipcMain.handle(IPC.channels.restart, () => {
+    channelBotManager.applyAll();
+    return channelBotManager.listStatus();
+  });
 
   // ─── Agent Runtime ─────────────────────────────────────────────────
   registerAgentIpc(database);

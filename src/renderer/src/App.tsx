@@ -203,6 +203,7 @@ function ModelConfigPage() {
   }, [provider.id, provider.name, customProviders]);
 
   function handleApiKeyBlur() {
+    if (!apiKey.trim()) return;
     void saveProviderToDb(apiKey, baseUrl, providerEnabled);
   }
 

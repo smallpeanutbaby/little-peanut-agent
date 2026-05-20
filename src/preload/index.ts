@@ -28,6 +28,13 @@ import type {
   ThinkBudget,
   ThinkProtocol
 } from "@shared/types.js";
+import type {
+  ChannelBotConfig,
+  ChannelBotRuntimeStatus,
+  ChannelBotSaveInput,
+  ChannelBotTestResult,
+  ChannelBotKind
+} from "@shared/channelBots.js";
 import { IPC, agentRunChannel, chatStreamChannel } from "@shared/ipc-channels.js";
 import { contextBridge, ipcRenderer } from "electron";
 
@@ -146,6 +153,7 @@ const electronAPI = {
   // Shell — reveal a path in Finder / Explorer. Returns "" on success or an
   // error string on failure (Electron `shell.openPath` contract).
   openPath: (path: string) => ipcRenderer.invoke(IPC.shell.openPath, path) as Promise<string>,
+  openExternal: (url: string) => ipcRenderer.invoke(IPC.shell.openExternal, url) as Promise<void>,
 
   // Git — structured `git status` for a project's working directory.
   getGitStatus: (projectPath: string) =>
@@ -200,6 +208,15 @@ const electronAPI = {
   setMcpServerEnabled: (id: string, enabled: boolean) =>
     ipcRenderer.invoke(IPC.mcp.setEnabled, id, enabled) as Promise<McpServerConfig | null>,
   testMcpServer: (cfg: McpServerConfig) => ipcRenderer.invoke(IPC.mcp.test, cfg) as Promise<McpTestResult>,
+
+  // IM channel bots (QQ / Feishu / DingTalk)
+  listChannelBots: () => ipcRenderer.invoke(IPC.channels.list) as Promise<ChannelBotConfig[]>,
+  saveChannelBot: (input: ChannelBotSaveInput) =>
+    ipcRenderer.invoke(IPC.channels.save, input) as Promise<ChannelBotConfig>,
+  getChannelBotsStatus: () => ipcRenderer.invoke(IPC.channels.status) as Promise<ChannelBotRuntimeStatus[]>,
+  testChannelBot: (id: ChannelBotKind) =>
+    ipcRenderer.invoke(IPC.channels.test, id) as Promise<ChannelBotTestResult>,
+  restartChannelBots: () => ipcRenderer.invoke(IPC.channels.restart) as Promise<ChannelBotRuntimeStatus[]>,
 
   // ─── Agent Runtime ──────────────────────────────────────────────────
   startAgentRun: (input: AgentStartRunInput) =>

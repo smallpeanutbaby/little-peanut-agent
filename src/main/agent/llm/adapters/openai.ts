@@ -198,9 +198,19 @@ export class OpenAILlmAdapter implements LlmAdapter {
     };
     if (req.temperature !== undefined) body.temperature = req.temperature;
     if (req.maxOutputTokens !== undefined) body.max_tokens = req.maxOutputTokens;
-    if (req.thinkBudget && req.thinkBudget !== "none") {
-      const effort = mapBudget("openai", req.thinkBudget);
-      if (effort) body.reasoning_effort = effort;
+    const thinkOn = req.thinkEnabled !== false && !!req.thinkBudget && req.thinkBudget !== "none";
+    if (thinkOn) {
+      const protocol = req.thinkProtocol ?? "openai";
+      if (protocol === "binary") {
+        body.enable_thinking = true;
+      } else if (protocol === "qwen") {
+        body.enable_thinking = true;
+        const level = mapBudget("qwen", req.thinkBudget!);
+        if (typeof level === "string") body.thinking_budget = level;
+      } else if (protocol === "openai") {
+        const effort = mapBudget("openai", req.thinkBudget!);
+        if (effort) body.reasoning_effort = effort;
+      }
     }
     if (req.tools && req.tools.length > 0) {
       body.tools = req.tools.map((t) => ({

@@ -102,6 +102,7 @@ declare global {
       pickDirectory: () => Promise<string | null>;
       // Shell
       openPath: (path: string) => Promise<string>;
+      openExternal: (url: string) => Promise<void>;
       // Git
       getGitStatus: (projectPath: string) => Promise<GitStatusResult>;
       listGitBranches: (projectPath: string) => Promise<GitBranchesResponse>;
@@ -131,6 +132,14 @@ declare global {
       deleteMcpServer: (id: string) => Promise<void>;
       setMcpServerEnabled: (id: string, enabled: boolean) => Promise<McpServerConfig | null>;
       testMcpServer: (cfg: McpServerConfig) => Promise<McpTestResult>;
+      // IM channel bots
+      listChannelBots: () => Promise<import("@shared/channelBots").ChannelBotConfig[]>;
+      saveChannelBot: (
+        input: import("@shared/channelBots").ChannelBotSaveInput
+      ) => Promise<import("@shared/channelBots").ChannelBotConfig>;
+      getChannelBotsStatus: () => Promise<import("@shared/channelBots").ChannelBotRuntimeStatus[]>;
+      testChannelBot: (id: import("@shared/channelBots").ChannelBotKind) => Promise<import("@shared/channelBots").ChannelBotTestResult>;
+      restartChannelBots: () => Promise<import("@shared/channelBots").ChannelBotRuntimeStatus[]>;
       // Agent runtime
       startAgentRun: (input: AgentStartRunInput) => Promise<{ runId: string }>;
       cancelAgentRun: (runId: string) => Promise<void>;

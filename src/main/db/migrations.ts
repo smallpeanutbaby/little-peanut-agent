@@ -388,6 +388,73 @@ const MIGRATIONS: Migration[] = [
         db.exec(`ALTER TABLE conversation ADD COLUMN last_run_options_json TEXT`);
       }
     }
+  },
+  {
+    version: 8,
+    description: "IM channel bot configuration (QQ / Feishu / DingTalk).",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS channel_bot (
+          id TEXT PRIMARY KEY,
+          enabled INTEGER NOT NULL DEFAULT 0,
+          app_id TEXT NOT NULL DEFAULT '',
+          app_secret_enc TEXT NOT NULL DEFAULT '',
+          token_enc TEXT NOT NULL DEFAULT '',
+          allow_from_json TEXT NOT NULL DEFAULT '[]',
+          default_mode_id TEXT NOT NULL DEFAULT 'chat',
+          default_project_id TEXT,
+          sandbox_mode INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+    }
+  },
+  {
+    version: 9,
+    description: "IM session state for channel bots (QQ peer routing).",
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS channel_im_session (
+          channel TEXT NOT NULL,
+          peer_id TEXT NOT NULL,
+          active_project_id TEXT,
+          active_conversation_id TEXT,
+          active_mode_id TEXT NOT NULL DEFAULT 'chat',
+          reply_seq_json TEXT NOT NULL DEFAULT '{}',
+          updated_at INTEGER NOT NULL,
+          PRIMARY KEY (channel, peer_id)
+        );
+      `);
+    }
+  },
+  {
+    version: 10,
+    description: "QQ/IM session: per-peer provider and model override.",
+    up: (db) => {
+      const cols = db.prepare(`PRAGMA table_info(channel_im_session)`).all() as Array<{ name: string }>;
+      const names = new Set(cols.map((c) => c.name));
+      if (!names.has("active_provider_id")) {
+        db.exec(`ALTER TABLE channel_im_session ADD COLUMN active_provider_id TEXT`);
+      }
+      if (!names.has("active_model_id")) {
+        db.exec(`ALTER TABLE channel_im_session ADD COLUMN active_model_id TEXT`);
+      }
+    }
+  },
+  {
+    version: 11,
+    description: "QQ/IM session: persist menu state for numeric replies.",
+    up: (db) => {
+      const cols = db.prepare(`PRAGMA table_info(channel_im_session)`).all() as Array<{ name: string }>;
+      const names = new Set(cols.map((c) => c.name));
+      if (!names.has("last_menu")) {
+        db.exec(`ALTER TABLE channel_im_session ADD COLUMN last_menu TEXT`);
+      }
+      if (!names.has("last_menu_at")) {
+        db.exec(`ALTER TABLE channel_im_session ADD COLUMN last_menu_at INTEGER`);
+      }
+    }
   }
 ];
 

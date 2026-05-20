@@ -117,7 +117,9 @@ export interface LlmRequest {
   tools?: CanonicalToolSpec[];
   toolChoice?: ToolChoice;
   temperature?: number;
+  thinkEnabled?: boolean;
   thinkBudget?: ThinkBudget;
+  thinkProtocol?: import("@shared/types.js").ThinkProtocol | null;
   /** Hard upper bound for completion tokens. Different providers spell
    *  this differently; adapters do the mapping. */
   maxOutputTokens?: number;

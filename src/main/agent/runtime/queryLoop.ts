@@ -72,6 +72,8 @@ export interface AgentRunParams {
   model: string;
   temperature?: number;
   thinkBudget?: ChatMode["defaultThinkBudget"];
+  thinkEnabled?: boolean;
+  thinkProtocol?: import("@shared/types.js").ThinkProtocol | null;
   maxOutputTokens?: number;
   language: "zh-CN" | "en";
   /** Tools available for this run (already filtered for subagent
@@ -288,6 +290,8 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
       toolChoice: "auto",
       temperature: params.temperature,
       thinkBudget: params.thinkBudget,
+      thinkEnabled: params.thinkEnabled,
+      thinkProtocol: params.thinkProtocol,
       maxOutputTokens: params.maxOutputTokens,
       signal: params.signal
     };
@@ -599,6 +603,8 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
           toolChoice: "auto",
           temperature: params.temperature,
           thinkBudget: params.thinkBudget,
+          thinkEnabled: params.thinkEnabled,
+          thinkProtocol: params.thinkProtocol,
           maxOutputTokens: 2048,
           signal: params.signal
         };
@@ -706,6 +712,8 @@ export async function* queryLoop(params: AgentRunParams): AsyncGenerator<AgentEv
           messages: [...history, summaryPrompt],
           temperature: params.temperature,
           thinkBudget: params.thinkBudget,
+          thinkEnabled: params.thinkEnabled,
+          thinkProtocol: params.thinkProtocol,
           maxOutputTokens: 1024,
           signal: params.signal
         };

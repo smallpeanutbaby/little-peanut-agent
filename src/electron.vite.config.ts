@@ -47,6 +47,12 @@ export default defineConfig({
   renderer: {
     root: path.join(__dirname, "renderer"),
     plugins: [react(), tailwindcss()],
+    server: {
+      port: 5173,
+      // If 5173 is taken, fail loudly instead of moving to 5174 while Electron
+      // still loads 5173 — that produces a blank #0a0a0a window with no UI.
+      strictPort: true
+    },
     resolve: {
       alias: {
         "@renderer": path.join(__dirname, "renderer/src"),

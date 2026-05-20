@@ -386,6 +386,8 @@ export function registerAgentIpc(database: AppDatabase): void {
                   model: input.model,
                   temperature: input.temperature ?? mode.defaultTemperature,
                   thinkBudget: input.thinkBudget ?? mode.defaultThinkBudget,
+                  thinkEnabled: input.thinkEnabled,
+                  thinkProtocol: input.thinkProtocol,
                   maxOutputTokens: input.maxOutputTokens,
                   language: input.language ?? "zh-CN",
                   tools,

@@ -148,7 +148,14 @@ This is not a concept-only repository. The current codebase already contains a p
 - Supports `stdio`, `SSE`, and `HTTP` transports
 - The architecture already leaves room for future skills, tool ecosystems, and external integrations
 
-### 9. Local Persistence
+### 9. Channel Bot Configuration
+
+- The settings UI now includes a channel-bot panel for managing `QQ`, `Feishu`, and `DingTalk` bot configuration
+- Supports persisted `AppId`, secrets, allow-list sources, default project, default mode, and sandbox toggle
+- The main process already exposes list, save, status, connectivity test, and restart entrypoints
+- The first fully wired runtime path is `QQ direct-message bots`, including session persistence, default project routing, and sandbox vs production switching
+
+### 10. Local Persistence
 
 - SQLite persistence already covers conversations, messages, tool runs, tasks, permissions, memory indexes, and cost logs
 - The schema is maintained through migrations with explicit evolution rules
@@ -205,6 +212,8 @@ The current migrations already cover a fairly broad set of entities, including:
 - `provider_config`
 - `model_config`
 - `mcp_server`
+- `channel_bot`
+- `channel_im_session`
 
 These power:
 
@@ -215,6 +224,7 @@ These power:
 - local memory indexing
 - model cost accounting
 - provider, model, and MCP configuration
+- channel-bot configuration and IM session state
 
 ## Safety Boundaries
 
